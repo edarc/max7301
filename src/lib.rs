@@ -9,3 +9,8 @@
 extern crate core;
 
 extern crate embedded_hal as hal;
+
+pub mod config;
+pub mod expander;
+pub mod interface;
+pub mod registers;
