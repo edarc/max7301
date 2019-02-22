@@ -83,7 +83,8 @@ impl From<BankConfig> for u8 {
     }
 }
 
-pub struct ExpanderConfig {
+#[derive(Clone)]
+pub(crate) struct ExpanderConfig {
     pub shutdown: bool,
     pub transition_detect: bool,
 }
@@ -108,6 +109,7 @@ impl From<ExpanderConfig> for u8 {
 #[must_use = "Configuration changes are not applied unless committed"]
 pub struct Configurator<'e, EI: ExpanderInterface> {
     expander: &'e mut Expander<EI>,
+    expander_config_dirty: bool,
     banks: [BankConfig; 7],
 }
 
@@ -115,6 +117,7 @@ impl<'e, EI: ExpanderInterface> Configurator<'e, EI> {
     pub(crate) fn new(expander: &'e mut Expander<EI>) -> Self {
         Self {
             expander,
+            expander_config_dirty: false,
             banks: [BankConfig(0); 7],
         }
     }
@@ -139,6 +142,18 @@ impl<'e, EI: ExpanderInterface> Configurator<'e, EI> {
         self
     }
 
+    pub fn shutdown(mut self, enable: bool) -> Self {
+        self.expander.config.shutdown = enable;
+        self.expander_config_dirty = true;
+        self
+    }
+
+    pub fn detect_transitions(mut self, enable: bool) -> Self {
+        self.expander.config.transition_detect = enable;
+        self.expander_config_dirty = true;
+        self
+    }
+
     pub fn commit(self) -> Result<(), ()> {
         for (bank, bank_config) in self.banks.iter().enumerate() {
             match bank_config.status() {
@@ -152,7 +167,11 @@ impl<'e, EI: ExpanderInterface> Configurator<'e, EI> {
                 }
             }
         }
-        Ok(())
+        if self.expander_config_dirty {
+            self.expander.write_config()
+        } else {
+            Ok(())
+        }
     }
 }
 

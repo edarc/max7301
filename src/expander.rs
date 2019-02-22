@@ -6,20 +6,24 @@ use registers::Register;
 
 pub struct Expander<EI: ExpanderInterface> {
     iface: EI,
+    pub(crate) config: ExpanderConfig,
 }
 
 impl<EI: ExpanderInterface> Expander<EI> {
     pub fn new(iface: EI) -> Self {
-        Self { iface }
-    }
-
-    pub fn write_config(&mut self, cfg: ExpanderConfig) -> Result<(), ()> {
-        self.iface
-            .write_register(Register::Configuration.into(), cfg.into())
+        Self {
+            iface,
+            config: ExpanderConfig::default(),
+        }
     }
 
     pub fn configure<'e>(&'e mut self) -> Configurator<'e, EI> {
         Configurator::new(self)
+    }
+
+    pub(crate) fn write_config(&mut self) -> Result<(), ()> {
+        self.iface
+            .write_register(Register::Configuration.into(), self.config.clone().into())
     }
 
     pub(crate) fn write_bank_config(&mut self, bank: u8, cfg: BankConfig) -> Result<(), ()> {
@@ -45,19 +49,6 @@ mod tests {
     use interface::test_spy::{TestRegister as TR, TestSpyInterface};
 
     #[test]
-    fn expander_write_config() {
-        let ei = TestSpyInterface::new();
-        let mut ex = Expander::new(ei.split());
-        assert!(ex
-            .write_config(ExpanderConfig {
-                shutdown: false,
-                transition_detect: false,
-            })
-            .is_ok());
-        assert_eq!(ei.get(0x04), TR::WrittenValue(0b00000000));
-    }
-
-    #[test]
     fn expander_configure_noop() {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
@@ -69,6 +60,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![TR::ResetValue(0b10101010); 7]
         );
+    }
+
+    #[test]
+    fn expander_configure_shutdown() {
+        let ei = TestSpyInterface::new();
+        let mut ex = Expander::new(ei.split());
+        assert!(ex.configure().shutdown(false).commit().is_ok());
+        assert_eq!(ei.get(0x04), TR::WrittenValue(0b00000000));
+    }
+
+    #[test]
+    fn expander_configure_detect_transitions() {
+        let ei = TestSpyInterface::new();
+        let mut ex = Expander::new(ei.split());
+        assert!(ex.configure().detect_transitions(true).commit().is_ok());
+        assert_eq!(ei.get(0x04), TR::WrittenValue(0b10000001));
     }
 
     #[test]
@@ -201,5 +208,19 @@ mod tests {
             ]
         );
         assert_eq!(ei.reads(), vec![]);
+    }
+
+    #[test]
+    fn expander_configure_ports_and_shutdown() {
+        let ei = TestSpyInterface::new();
+        let mut ex = Expander::new(ei.split());
+        assert!(ex
+            .configure()
+            .ports(4..=7, PortMode::Output)
+            .shutdown(false)
+            .commit()
+            .is_ok());
+        assert_eq!(ei.get(0x04), TR::WrittenValue(0b00000000));
+        assert_eq!(ei.get(0x09), TR::WrittenValue(0b01010101),);
     }
 }
