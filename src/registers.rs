@@ -1,6 +1,17 @@
 //! The register addresses within the MAX7301.
 
-use interface::RegisterAddress;
+/// A register address within the MAX7301. These are created by conversion from `Register`. It is a
+/// newtype around `u8` that prevents invalid addresses from being forged and passed to
+/// `ExpanderInterface` methods which may trigger UB on the device.
+#[derive(PartialEq, Clone, Copy)]
+pub struct RegisterAddress(pub(crate) u8);
+
+impl From<RegisterAddress> for u8 {
+    /// Convert a `RegisterAddress` into a `u8` corresponding to the hardware address.
+    fn from(addr: RegisterAddress) -> u8 {
+        addr.0
+    }
+}
 
 pub enum Register {
     /// The no-op register. Reading or writing this register has no effect.
@@ -53,7 +64,6 @@ impl From<Register> for RegisterAddress {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use interface::RegisterAddress;
 
     #[test]
     fn bank_config_address_valid() {

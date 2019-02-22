@@ -2,15 +2,7 @@
 //! supported electrical/bus interfaces. It is a shim between `embedded-hal` implementations and
 //! the expander's registers.
 
-/// Newtype for register addresses.
-#[derive(PartialEq, Clone, Copy)]
-pub struct RegisterAddress(pub(crate) u8);
-
-impl From<RegisterAddress> for u8 {
-    fn from(addr: RegisterAddress) -> u8 {
-        addr.0
-    }
-}
+use registers::RegisterAddress;
 
 /// An interface for the MAX7301 implements this trait, which provides the basic operations for
 /// sending pre-encoded register accesses to the chip via the interface.
@@ -29,7 +21,8 @@ pub trait ExpanderInterface {
 // This is here (and has to be pub) for doctests only. It's useless otherwise.
 #[doc(hidden)]
 pub mod noop {
-    use super::{ExpanderInterface, RegisterAddress};
+    use super::ExpanderInterface;
+    use registers::RegisterAddress;
     pub struct NoopInterface;
     impl ExpanderInterface for NoopInterface {
         fn write_register(&mut self, _addr: RegisterAddress, _value: u8) -> Result<(), ()> {
@@ -45,7 +38,8 @@ pub mod noop {
 pub(crate) mod test_spy {
     //! An interface for use in unit tests to spy on whatever was sent to it.
 
-    use super::{ExpanderInterface, RegisterAddress};
+    use super::ExpanderInterface;
+    use registers::RegisterAddress;
     use std::cell::RefCell;
     use std::rc::Rc;
 
