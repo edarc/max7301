@@ -26,8 +26,23 @@ pub trait ExpanderInterface {
 //. I2C address).
 // type UnitAddress;
 
+// This is here (and has to be pub) for doctests only. It's useless otherwise.
+#[doc(hidden)]
+pub mod noop {
+    use super::{ExpanderInterface, RegisterAddress};
+    pub struct NoopInterface;
+    impl ExpanderInterface for NoopInterface {
+        fn write_register(&mut self, _addr: RegisterAddress, _value: u8) -> Result<(), ()> {
+            Ok(())
+        }
+        fn read_register(&mut self, _addr: RegisterAddress) -> Result<u8, ()> {
+            Ok(0u8)
+        }
+    }
+}
+
 #[cfg(test)]
-pub mod test_spy {
+pub(crate) mod test_spy {
     //! An interface for use in unit tests to spy on whatever was sent to it.
 
     use super::{ExpanderInterface, RegisterAddress};

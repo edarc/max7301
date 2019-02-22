@@ -1,15 +1,19 @@
-//! The port expander device API.
+//! The port expander device API. This provides the `Expander` type which is a direct abstraction
+//! of the MAX7301. It allows direct use of all operations available on the device.
 
 use config::{BankConfig, Configurator, ExpanderConfig};
 use interface::ExpanderInterface;
 use registers::Register;
 
+/// The port expander device itself.
 pub struct Expander<EI: ExpanderInterface> {
     iface: EI,
     pub(crate) config: ExpanderConfig,
 }
 
 impl<EI: ExpanderInterface> Expander<EI> {
+    /// Create a new `Expander`. Takes ownership of the `ExpanderInterface` which it should use to
+    /// communicate with the MAX7301.
     pub fn new(iface: EI) -> Self {
         Self {
             iface,
@@ -17,6 +21,8 @@ impl<EI: ExpanderInterface> Expander<EI> {
         }
     }
 
+    /// Begin (re)configuring the port expander hardware by returning a `Configurator`. This is a
+    /// builder-like interface that can be used to alter port modes and device configuration bits.
     pub fn configure<'e>(&'e mut self) -> Configurator<'e, EI> {
         Configurator::new(self)
     }

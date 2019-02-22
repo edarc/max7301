@@ -1,4 +1,4 @@
-//! Configuration abstractions.
+//! Abstractions used to configure the MAX7301 hardware.
 
 use expander::Expander;
 use interface::ExpanderInterface;
@@ -8,10 +8,15 @@ fn port_bank_and_offset(port: u8) -> (u8, u8) {
     (valid_port(port) / 4 - 1, port % 4)
 }
 
+/// A `PortMode` enumerates the three supported modes that each GPIO pin on the MAX7301 may be
+/// configured to.
 #[derive(Clone, Copy, Debug)]
 pub enum PortMode {
+    /// Push-pull logic output.
     Output,
+    /// Floating logic input.
     InputFloating,
+    /// Logic input with weak pull-up.
     InputPullup,
 }
 
@@ -85,8 +90,8 @@ impl From<BankConfig> for u8 {
 
 #[derive(Clone)]
 pub(crate) struct ExpanderConfig {
-    pub shutdown: bool,
-    pub transition_detect: bool,
+    shutdown: bool,
+    transition_detect: bool,
 }
 
 impl Default for ExpanderConfig {
@@ -106,6 +111,24 @@ impl From<ExpanderConfig> for u8 {
     }
 }
 
+/// A `Configurator` provides methods to build a list of device configuration changes, such as port
+/// modes and device configuration bits, and commit them to the device. You obtain one from the
+/// `Expander::configure()`, chain method calls on it to make configuration changes, and then end
+/// the chain with `commit()` to transmit them to the MAX7301.
+///
+/// ```
+/// # use max7301::interface::noop::NoopInterface;
+/// # use max7301::expander::Expander;
+/// # use max7301::config::PortMode;
+/// # let ei = NoopInterface;
+/// let mut expander = Expander::new(ei);
+/// expander
+///     .configure()
+///     .ports(4..=7, PortMode::Output)
+///     .shutdown(false)
+///     .commit()
+///     .unwrap();
+/// ```
 #[must_use = "Configuration changes are not applied unless committed"]
 pub struct Configurator<'e, EI: ExpanderInterface> {
     expander: &'e mut Expander<EI>,
@@ -122,38 +145,54 @@ impl<'e, EI: ExpanderInterface> Configurator<'e, EI> {
         }
     }
 
-    fn set_port(&mut self, port: u8, cfg: PortMode) {
+    fn set_port(&mut self, port: u8, mode: PortMode) {
         let (bank, offset) = port_bank_and_offset(port);
-        self.banks[bank as usize].set_port(offset, cfg);
+        self.banks[bank as usize].set_port(offset, mode);
     }
 
-    pub fn port(mut self, port: u8, cfg: PortMode) -> Self {
-        self.set_port(port, cfg);
+    /// Set the port mode of a single GPIO pin on the MAX7301 to `mode`. `port` is the port number
+    /// as specified in the device datasheet, in the range `4..=31`.
+    pub fn port(mut self, port: u8, mode: PortMode) -> Self {
+        self.set_port(port, mode);
         self
     }
 
-    pub fn ports<I>(mut self, ports: I, cfg: PortMode) -> Self
+    /// Set the port mode of a sequence of GPIO pins to the given `PortMode`. `ports` must yield
+    /// values corresponding to port numbers as specified in the device datasheet, in the range
+    /// `4..=31`. All of the ports will be set to mode `mode`.
+    pub fn ports<I>(mut self, ports: I, mode: PortMode) -> Self
     where
         I: IntoIterator<Item = u8>,
     {
         for port in ports {
-            self.set_port(port, cfg);
+            self.set_port(port, mode);
         }
         self
     }
 
+    /// Set the MAX7301's shutdown bit. When `false` the device will operate normally; when `true`
+    /// the device enters shutdown mode. In shutdown mode all ports are overridden to input mode
+    /// and pull-up current sources are disabled, but all registers retain their values and may be
+    /// read and written normally. See the datasheet for more details.
     pub fn shutdown(mut self, enable: bool) -> Self {
         self.expander.config.shutdown = enable;
         self.expander_config_dirty = true;
         self
     }
 
+    /// Set the MAX7301's transition detection feature control bit. When `false` the feature is
+    /// disabled; when `true` ports 24 through 31 will be monitored for changes, setting an
+    /// interrupt pin when they are detected. See datasheet for details. Interrupts generated from
+    /// this hardware feature are not managed by this driver.
     pub fn detect_transitions(mut self, enable: bool) -> Self {
         self.expander.config.transition_detect = enable;
         self.expander_config_dirty = true;
         self
     }
 
+    /// Commit the configuration changes to the MAX7301. The configurator will attempt to update
+    /// the device's configuration registers while minimizing bus traffic (avoiding
+    /// read-modify-writes when possible, not setting registers that were not changed).
     pub fn commit(self) -> Result<(), ()> {
         for (bank, bank_config) in self.banks.iter().enumerate() {
             match bank_config.status() {
