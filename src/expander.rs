@@ -1,6 +1,6 @@
 //! The port expander device API.
 
-use config::{BankConfig, ExpanderConfig, PortConfigurator};
+use config::{BankConfig, Configurator, ExpanderConfig};
 use interface::ExpanderInterface;
 use registers::Register;
 
@@ -18,8 +18,8 @@ impl<EI: ExpanderInterface> Expander<EI> {
             .write_register(Register::Configuration.into(), cfg.into())
     }
 
-    pub fn reconfigure_ports<'e>(&'e mut self) -> PortConfigurator<'e, EI> {
-        PortConfigurator::new(self)
+    pub fn configure<'e>(&'e mut self) -> Configurator<'e, EI> {
+        Configurator::new(self)
     }
 
     pub(crate) fn write_bank_config(&mut self, bank: u8, cfg: BankConfig) -> Result<(), ()> {
@@ -41,7 +41,7 @@ impl<EI: ExpanderInterface> Expander<EI> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::PortConfig;
+    use config::PortMode;
     use interface::test_spy::{TestRegister as TR, TestSpyInterface};
 
     #[test]
@@ -58,10 +58,10 @@ mod tests {
     }
 
     #[test]
-    fn expander_reconfigure_ports_noop() {
+    fn expander_configure_noop() {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
-        assert!(ex.reconfigure_ports().commit().is_ok());
+        assert!(ex.configure().commit().is_ok());
         assert_eq!(
             (0x09..0x10)
                 .into_iter()
@@ -72,14 +72,10 @@ mod tests {
     }
 
     #[test]
-    fn expander_reconfigure_ports_single_read_modify() {
+    fn expander_configure_port_single_read_modify() {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
-        assert!(ex
-            .reconfigure_ports()
-            .with_port(4, PortConfig::Output)
-            .commit()
-            .is_ok());
+        assert!(ex.configure().port(4, PortMode::Output).commit().is_ok());
         assert_eq!(
             (0x09..0x10)
                 .into_iter()
@@ -99,12 +95,12 @@ mod tests {
     }
 
     #[test]
-    fn expander_reconfigure_ports_range_read_modify() {
+    fn expander_configure_ports_read_modify() {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
         assert!(ex
-            .reconfigure_ports()
-            .with_ports(4..=6, PortConfig::Output)
+            .configure()
+            .ports(4..=6, PortMode::Output)
             .commit()
             .is_ok());
         assert_eq!(
@@ -126,12 +122,12 @@ mod tests {
     }
 
     #[test]
-    fn expander_reconfigure_ports_range_overwrite() {
+    fn expander_configure_ports_overwrite() {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
         assert!(ex
-            .reconfigure_ports()
-            .with_ports(4..=7, PortConfig::Output)
+            .configure()
+            .ports(4..=7, PortMode::Output)
             .commit()
             .is_ok());
         assert_eq!(
@@ -153,12 +149,12 @@ mod tests {
     }
 
     #[test]
-    fn expander_reconfigure_ports_range_spanning() {
+    fn expander_configure_ports_spanning() {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
         assert!(ex
-            .reconfigure_ports()
-            .with_ports(6..=13, PortConfig::Output)
+            .configure()
+            .ports(6..=13, PortMode::Output)
             .commit()
             .is_ok());
         assert_eq!(
@@ -180,13 +176,13 @@ mod tests {
     }
 
     #[test]
-    fn expander_reconfigure_ports_range_overlapping() {
+    fn expander_configure_ports_port_overlapping() {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
         assert!(ex
-            .reconfigure_ports()
-            .with_ports(4..=11, PortConfig::Output)
-            .with_port(7, PortConfig::InputPullup)
+            .configure()
+            .ports(4..=11, PortMode::Output)
+            .port(7, PortMode::InputPullup)
             .commit()
             .is_ok());
         assert_eq!(

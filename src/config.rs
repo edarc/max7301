@@ -9,15 +9,15 @@ fn port_bank_and_offset(port: u8) -> (u8, u8) {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum PortConfig {
+pub enum PortMode {
     Output,
     InputFloating,
     InputPullup,
 }
 
-impl From<PortConfig> for u8 {
-    fn from(cfg: PortConfig) -> u8 {
-        use self::PortConfig::*;
+impl From<PortMode> for u8 {
+    fn from(cfg: PortMode) -> u8 {
+        use self::PortMode::*;
         match cfg {
             Output => 0b01,
             InputFloating => 0b10,
@@ -43,7 +43,7 @@ impl Default for BankConfig {
 }
 
 impl BankConfig {
-    fn set_port(&mut self, port_offset: u8, cfg: PortConfig) {
+    fn set_port(&mut self, port_offset: u8, cfg: PortMode) {
         match port_offset {
             0...4 => {
                 let mask = !(0b11u8 << port_offset * 2);
@@ -105,13 +105,13 @@ impl From<ExpanderConfig> for u8 {
     }
 }
 
-#[must_use = "Port configuration changes are not applied unless committed"]
-pub struct PortConfigurator<'e, EI: ExpanderInterface> {
+#[must_use = "Configuration changes are not applied unless committed"]
+pub struct Configurator<'e, EI: ExpanderInterface> {
     expander: &'e mut Expander<EI>,
     banks: [BankConfig; 7],
 }
 
-impl<'e, EI: ExpanderInterface> PortConfigurator<'e, EI> {
+impl<'e, EI: ExpanderInterface> Configurator<'e, EI> {
     pub(crate) fn new(expander: &'e mut Expander<EI>) -> Self {
         Self {
             expander,
@@ -119,17 +119,17 @@ impl<'e, EI: ExpanderInterface> PortConfigurator<'e, EI> {
         }
     }
 
-    fn set_port(&mut self, port: u8, cfg: PortConfig) {
+    fn set_port(&mut self, port: u8, cfg: PortMode) {
         let (bank, offset) = port_bank_and_offset(port);
         self.banks[bank as usize].set_port(offset, cfg);
     }
 
-    pub fn with_port(mut self, port: u8, cfg: PortConfig) -> Self {
+    pub fn port(mut self, port: u8, cfg: PortMode) -> Self {
         self.set_port(port, cfg);
         self
     }
 
-    pub fn with_ports<I>(mut self, ports: I, cfg: PortConfig) -> Self
+    pub fn ports<I>(mut self, ports: I, cfg: PortMode) -> Self
     where
         I: IntoIterator<Item = u8>,
     {
@@ -163,8 +163,8 @@ mod tests {
     #[test]
     fn bank_config_set_port_valid() {
         let mut bank = BankConfig::default();
-        bank.set_port(0, PortConfig::InputPullup);
-        bank.set_port(2, PortConfig::Output);
+        bank.set_port(0, PortMode::InputPullup);
+        bank.set_port(2, PortMode::Output);
         assert_eq!(u8::from(bank), 0b00010011);
     }
 
@@ -172,7 +172,7 @@ mod tests {
     #[should_panic]
     fn bank_config_set_port_invalid() {
         let mut bank = BankConfig::default();
-        bank.set_port(4, PortConfig::InputPullup);
+        bank.set_port(4, PortMode::InputPullup);
     }
 
     #[test]
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn bank_config_keep_mask_change_0() {
         let mut bank = BankConfig::default();
-        bank.set_port(0, PortConfig::InputPullup);
+        bank.set_port(0, PortMode::InputPullup);
         assert_eq!(bank.keep_mask(), 0b11111100);
         assert_eq!(bank.status(), BankConfigStatus::ReadModify);
     }
@@ -193,8 +193,8 @@ mod tests {
     #[test]
     fn bank_config_keep_mask_change_0_2() {
         let mut bank = BankConfig::default();
-        bank.set_port(0, PortConfig::InputPullup);
-        bank.set_port(2, PortConfig::Output);
+        bank.set_port(0, PortMode::InputPullup);
+        bank.set_port(2, PortMode::Output);
         assert_eq!(bank.keep_mask(), 0b11001100);
         assert_eq!(bank.status(), BankConfigStatus::ReadModify);
     }
@@ -203,7 +203,7 @@ mod tests {
     fn bank_config_keep_mask_change_all() {
         let mut bank = BankConfig::default();
         for p in 0..4 {
-            bank.set_port(p, PortConfig::Output);
+            bank.set_port(p, PortMode::Output);
         }
         assert_eq!(bank.keep_mask(), 0b00000000);
         assert_eq!(bank.status(), BankConfigStatus::Overwrite);
@@ -213,8 +213,8 @@ mod tests {
     fn bank_config_merge() {
         let orig = 0b11101010u8;
         let mut bank = BankConfig::default();
-        bank.set_port(0, PortConfig::InputPullup);
-        bank.set_port(2, PortConfig::Output);
+        bank.set_port(0, PortMode::InputPullup);
+        bank.set_port(2, PortMode::Output);
         assert_eq!(u8::from(bank.merge(orig)), 0b11011011u8);
     }
 
