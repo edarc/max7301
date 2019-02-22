@@ -7,7 +7,9 @@ use registers::RegisterAddress;
 /// An interface for the MAX7301 implements this trait, which provides the basic operations for
 /// sending pre-encoded register accesses to the chip via the interface.
 pub trait ExpanderInterface {
+    /// Issue a write command to the expander to write `value` into the register at `addr`.
     fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()>;
+    /// Issue a read command to the expander to fetch the `u8` value at register `addr`.
     fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()>;
 }
 
