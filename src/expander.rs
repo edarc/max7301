@@ -73,7 +73,7 @@ mod tests {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
         assert!(ex.configure().shutdown(false).commit().is_ok());
-        assert_eq!(ei.get(0x04), TR::WrittenValue(0b00000000));
+        assert_eq!(ei.get(0x04), TR::WrittenValue(0b00000001));
     }
 
     #[test]
@@ -81,7 +81,7 @@ mod tests {
         let ei = TestSpyInterface::new();
         let mut ex = Expander::new(ei.split());
         assert!(ex.configure().detect_transitions(true).commit().is_ok());
-        assert_eq!(ei.get(0x04), TR::WrittenValue(0b10000001));
+        assert_eq!(ei.get(0x04), TR::WrittenValue(0b10000000));
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod tests {
             .shutdown(false)
             .commit()
             .is_ok());
-        assert_eq!(ei.get(0x04), TR::WrittenValue(0b00000000));
+        assert_eq!(ei.get(0x04), TR::WrittenValue(0b00000001));
         assert_eq!(ei.get(0x09), TR::WrittenValue(0b01010101),);
     }
 }

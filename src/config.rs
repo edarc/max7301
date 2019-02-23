@@ -105,7 +105,7 @@ impl Default for ExpanderConfig {
 
 impl From<ExpanderConfig> for u8 {
     fn from(cfg: ExpanderConfig) -> u8 {
-        let shtd = if cfg.shutdown { 0b00000001 } else { 0 };
+        let shtd = if cfg.shutdown { 0 } else { 0b00000001 };
         let txnd = if cfg.transition_detect { 0b10000000 } else { 0 };
         shtd | txnd
     }
@@ -279,20 +279,20 @@ mod tests {
     #[test]
     fn expander_config_default() {
         let expander_config = ExpanderConfig::default();
-        assert_eq!(u8::from(expander_config), 0b00000001);
+        assert_eq!(u8::from(expander_config), 0b00000000);
     }
 
     #[test]
     fn expander_config_disable_shutdown() {
         let mut expander_config = ExpanderConfig::default();
         expander_config.shutdown = false;
-        assert_eq!(u8::from(expander_config), 0b00000000);
+        assert_eq!(u8::from(expander_config), 0b00000001);
     }
 
     #[test]
     fn expander_config_enable_transition_detect() {
         let mut expander_config = ExpanderConfig::default();
         expander_config.transition_detect = true;
-        assert_eq!(u8::from(expander_config), 0b10000001);
+        assert_eq!(u8::from(expander_config), 0b10000000);
     }
 }
