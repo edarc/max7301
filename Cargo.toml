@@ -14,7 +14,12 @@ exclude = [
 [dependencies]
 embedded-hal = "0.2"
 
+[dependencies.cortex-m]
+version = "0.5.2"
+optional = true
+
 [features]
 default = ["std", "unproven"]
 std = []
 unproven = ["embedded-hal/unproven"]
+cortexm = ["cortex-m"]

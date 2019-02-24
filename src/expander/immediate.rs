@@ -1,26 +1,53 @@
 //! Immediate-mode I/O adapter.
 
-use core::cell::RefCell;
+use core::marker::PhantomData;
 
 use expander::pin::{ExpanderIO, Pin};
 use expander::Expander;
 use interface::ExpanderInterface;
+use mutex::IOMutex;
 use registers::valid_port;
 
 /// This I/O adapter captures the `Expander` and provides a factory for generating GPIO pins that
 /// implement `InputPin` and `OutputPin` traits. Each such pin will immediately issue a bus
 /// transaction to get or set the value every time any pin is accessed.
-pub struct ImmediateIO<EI: ExpanderInterface>(RefCell<Expander<EI>>);
+pub struct ImmediateIO<M, EI>(M, PhantomData<*const EI>)
+where
+    M: IOMutex<Expander<EI>>,
+    EI: ExpanderInterface;
 
-impl<EI: ExpanderInterface> ImmediateIO<EI> {
+// Unsafety: These are only needed because the presence of PhantomData<EI> causes the struct to no
+// longer be Sync/Send, because EI is often not Sync/Send since it owns a global resource (e.g. SPI
+// device). However, the EI is actually owned by the Expander which is in the mutex which normally
+// re-instates Sync-ness. PhantomData is there to shut up the unused type parameter error (I still
+// don't understand why passing a type parameter into a trait bound doesn't count as "using" it).
+unsafe impl<M, EI> Send for ImmediateIO<M, EI>
+where
+    M: IOMutex<Expander<EI>>,
+    EI: ExpanderInterface,
+{
+}
+unsafe impl<M, EI> Sync for ImmediateIO<M, EI>
+where
+    M: IOMutex<Expander<EI>>,
+    EI: ExpanderInterface,
+{
+}
+
+impl<M, EI> ImmediateIO<M, EI>
+where
+    M: IOMutex<Expander<EI>>,
+    EI: ExpanderInterface,
+{
     pub(crate) fn new(expander: Expander<EI>) -> Self {
-        ImmediateIO(RefCell::new(expander))
+        ImmediateIO(M::new(expander), PhantomData)
     }
 
-    /// Release the `Expander` from this adapter, consuming the latter.
-    pub fn release(self) -> Expander<EI> {
-        self.0.into_inner()
-    }
+    // cortex-m Mutex doesn't support this operation.
+    // /// Release the `Expander` from this adapter, consuming the latter.
+    // pub fn release(self) -> Expander<EI> {
+    //     self.0.into_inner()
+    // }
 
     /// Create a `Pin` corresponding to one of the ports on the MAX7301. The returned `Pin`
     /// implements `InputPin` and `OutputPin`, and using any of the methods from these traits on
@@ -31,26 +58,30 @@ impl<EI: ExpanderInterface> ImmediateIO<EI> {
     }
 }
 
-impl<EI: ExpanderInterface> ExpanderIO for ImmediateIO<EI> {
+impl<M, EI> ExpanderIO for ImmediateIO<M, EI>
+where
+    M: IOMutex<Expander<EI>>,
+    EI: ExpanderInterface,
+{
     fn write_port(&self, port: u8, bit: bool) {
-        self.0.borrow_mut().write_port(port, bit).unwrap()
+        self.0.lock(|ex| ex.write_port(port, bit).unwrap())
     }
     fn read_port(&self, port: u8) -> bool {
-        self.0.borrow_mut().read_port(port).unwrap()
+        self.0.lock(|ex| ex.read_port(port).unwrap())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use expander::Expander;
     use hal::digital::{InputPin, OutputPin};
     use interface::test_spy::{TestRegister as TR, TestSpyInterface};
+    use mutex::DefaultMutex;
 
     #[test]
     fn single_pin_write() {
         let ei = TestSpyInterface::new();
-        let io = ImmediateIO::new(Expander::new(ei.split()));
+        let io = Expander::new(ei.split()).into_immediate::<DefaultMutex<_>>();
         let mut pin_twelve = io.port_pin(12);
 
         pin_twelve.set_high();
@@ -60,7 +91,7 @@ mod tests {
     #[test]
     fn single_pin_read() {
         let mut ei = TestSpyInterface::new();
-        let io = ImmediateIO::new(Expander::new(ei.split()));
+        let io = Expander::new(ei.split()).into_immediate::<DefaultMutex<_>>();
         let pin_twelve = io.port_pin(12);
 
         ei.set(0x2C, TR::ResetValue(0x00));
@@ -73,7 +104,7 @@ mod tests {
     #[test]
     fn multi_pin_read_write() {
         let mut ei = TestSpyInterface::new();
-        let io = ImmediateIO::new(Expander::new(ei.split()));
+        let io = Expander::new(ei.split()).into_immediate::<DefaultMutex<_>>();
         let mut pin_twelve = io.port_pin(12);
         let mut pin_sixteen = io.port_pin(16);
         let pin_twenty = io.port_pin(20);

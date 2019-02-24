@@ -2,7 +2,9 @@
 //! of the MAX7301. It allows direct use of all operations available on the device.
 
 use config::{BankConfig, Configurator, ExpanderConfig};
+use expander::immediate::ImmediateIO;
 use interface::ExpanderInterface;
+use mutex::IOMutex;
 use registers::Register;
 
 pub mod immediate;
@@ -28,6 +30,10 @@ impl<EI: ExpanderInterface> Expander<EI> {
     /// builder-like interface that can be used to alter port modes and device configuration bits.
     pub fn configure<'e>(&'e mut self) -> Configurator<'e, EI> {
         Configurator::new(self)
+    }
+
+    pub fn into_immediate<M: IOMutex<Self>>(self) -> ImmediateIO<M, EI> {
+        ImmediateIO::new(self)
     }
 
     /// Perform a read of the current value of a single I/O port on the expander.

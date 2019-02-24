@@ -13,9 +13,13 @@ extern crate embedded_hal as hal;
 pub mod config;
 pub mod expander;
 pub mod interface;
+pub mod mutex;
 pub mod registers;
 
 pub use config::PortMode;
+pub use expander::immediate::ImmediateIO;
+pub use expander::pin::{ExpanderIO, Pin};
 pub use expander::Expander;
 pub use interface::spi::SpiInterface;
 pub use interface::ExpanderInterface;
+pub use mutex::{DefaultMutex, IOMutex};
