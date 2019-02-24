@@ -27,6 +27,21 @@ impl<EI: ExpanderInterface> Expander<EI> {
         Configurator::new(self)
     }
 
+    /// Perform a read of the current value of a single I/O port on the expander.
+    pub fn read_port(&mut self, port: u8) -> Result<bool, ()> {
+        self.iface
+            .read_register(Register::SinglePort(port).into())
+            .map(|v| v == 0x01)
+    }
+
+    /// Write a value to a single I/O port on the expander.
+    pub fn write_port(&mut self, port: u8, bit: bool) -> Result<(), ()> {
+        self.iface.write_register(
+            Register::SinglePort(port).into(),
+            if bit { 0x01 } else { 0x00 },
+        )
+    }
+
     pub(crate) fn write_config(&mut self) -> Result<(), ()> {
         self.iface
             .write_register(Register::Configuration.into(), self.config.clone().into())
