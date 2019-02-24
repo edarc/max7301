@@ -36,6 +36,92 @@ pub mod noop {
     }
 }
 
+pub mod spi {
+    //! The SPI interface controls a MAX7301 via a 4-wire interface (SCK, MOSI, MISO, CS).
+
+    use hal;
+
+    use super::{ExpanderInterface, RegisterAddress};
+    use registers::Register;
+
+    /// A configured `ExpanderInterface` for controlling a MAX7301 via SPI.
+    pub struct SpiInterface<SPI, CS> {
+        /// The SPI master device connected to the MAX7301.
+        spi: SPI,
+        /// A GPIO output pin connected to the CS pin of the MAX7301.
+        cs: CS,
+    }
+
+    impl<SPI, CS> SpiInterface<SPI, CS>
+    where
+        SPI: hal::blocking::spi::Write<u8> + hal::blocking::spi::Transfer<u8>,
+        CS: hal::digital::OutputPin,
+    {
+        /// Create a new SPI interface to communicate with the port expander. `spi` is the SPI
+        /// master device, and `cs` is the GPIO output pin connected to the CS pin of the MAX7301.
+        pub fn new(spi: SPI, mut cs: CS) -> Self {
+            cs.set_high();
+            Self { spi, cs }
+        }
+    }
+
+    impl<SPI, CS> ExpanderInterface for SpiInterface<SPI, CS>
+    where
+        SPI: hal::blocking::spi::Write<u8> + hal::blocking::spi::Transfer<u8>,
+        CS: hal::digital::OutputPin,
+    {
+        fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()> {
+            // Address goes in upper byte, value goes in lower. Address MSB is zero for a write.
+            let buf = [u8::from(addr), value];
+
+            // Select chip and do bus write.
+            self.cs.set_low();
+            let result = self.spi.write(&buf);
+            self.cs.set_high();
+
+            match result {
+                Ok(()) => Ok(()),
+                Err(_) => Err(()),
+            }
+        }
+
+        fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()> {
+            // Address goes in upper byte, lower byte is don't-care because it will be clobbered
+            // when CS goes high. Address MSB is *set* for a read.
+            let addr_word = 0x80 | u8::from(addr);
+
+            // Select chip and do bus write.
+            self.cs.set_low();
+            let addr_result = self.spi.write(&[addr_word, 0]);
+            self.cs.set_high();
+
+            match addr_result {
+                Err(_) => return Err(()),
+                _ => {}
+            };
+
+            // Expander has latched the value of the requested register into the low byte of its
+            // SPI shift register at CS rising edge. Select chip again and shift it back to us.
+            // Shift in a no-op so the expander will do nothing on second CS falling edge.
+            let mut buf = [RegisterAddress::from(Register::Noop).into(), 0u8];
+            self.cs.set_low();
+            let data_result = self.spi.transfer(&mut buf);
+            self.cs.set_high();
+
+            match data_result {
+                Err(_) => Err(()),
+                Ok(buf) => {
+                    if buf[0] != addr_word {
+                        Err(())
+                    } else {
+                        Ok(buf[1])
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_spy {
     //! An interface for use in unit tests to spy on whatever was sent to it.
