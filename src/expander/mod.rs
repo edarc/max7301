@@ -5,6 +5,9 @@ use config::{BankConfig, Configurator, ExpanderConfig};
 use interface::ExpanderInterface;
 use registers::Register;
 
+pub mod immediate;
+pub mod pin;
+
 /// The port expander device itself.
 pub struct Expander<EI: ExpanderInterface> {
     iface: EI,

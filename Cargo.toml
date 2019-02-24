@@ -15,5 +15,6 @@ exclude = [
 embedded-hal = "0.2"
 
 [features]
-default = ["std"]
+default = ["std", "unproven"]
 std = []
+unproven = ["embedded-hal/unproven"]
