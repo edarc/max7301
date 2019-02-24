@@ -13,13 +13,6 @@ pub trait ExpanderInterface {
     fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()>;
 }
 
-//. A `UnitAddress` specifies the address of the MAX7301 on the bus interface. For SPI units,
-//. this allows supporting multiple MAX7301s on a single CS, with their shift registers chained
-//. together using the method documented in the datasheet. (In the future, this driver may be
-//. extended to support the MAX7300 which is the I2C variant, in which case this specifies the
-//. I2C address).
-// type UnitAddress;
-
 // This is here (and has to be pub) for doctests only. It's useless otherwise.
 #[doc(hidden)]
 pub mod noop {
