@@ -43,6 +43,19 @@ impl<EI: ExpanderInterface> Expander<EI> {
             .map(|v| v == 0x01)
     }
 
+    /// Perform a read of the current value of 8 consecutive I/O ports on the expander in a single
+    /// bus transaction.
+    ///
+    /// There is no alignment requirement; the `start_port` may be any valid port, and that port
+    /// along with up to 7 following ports will be read in one transaction. The return value is a
+    /// `u8` where the LSB is the value read from `start_port`, and each higher bit is the 7 ports
+    /// following it in ascending order. If any of the bits would correspond to a port higher than
+    /// 31, then those bits will be unset.
+    pub fn read_ports(&mut self, start_port: u8) -> Result<u8, ()> {
+        self.iface
+            .read_register(Register::PortRange(start_port).into())
+    }
+
     /// Write a value to a single I/O port on the expander.
     pub fn write_port(&mut self, port: u8, bit: bool) -> Result<(), ()> {
         self.iface.write_register(
