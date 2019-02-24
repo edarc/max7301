@@ -11,22 +11,16 @@ use registers::valid_port;
 /// This I/O adapter captures the `Expander` and provides a factory for generating GPIO pins that
 /// implement `InputPin` and `OutputPin` traits. Each such pin will immediately issue a bus
 /// transaction to get or set the value every time any pin is accessed.
-pub struct ImmediateIO<M, EI>(M, PhantomData<*const EI>)
+pub struct ImmediateIO<M, EI>(M, PhantomData<EI>)
 where
     M: IOMutex<Expander<EI>>,
     EI: ExpanderInterface;
 
-// Unsafety: These are only needed because the presence of PhantomData<EI> causes the struct to no
-// longer be Sync/Send, because EI is often not Sync/Send since it owns a global resource (e.g. SPI
-// device). However, the EI is actually owned by the Expander which is in the mutex which normally
+// Unsafety: This is only needed because the presence of PhantomData<EI> causes the struct to no
+// longer be Sync, because EI is often not Sync since it owns a global resource (e.g. SPI device).
+// However, the EI is actually owned by the Expander which is in the mutex which normally
 // re-instates Sync-ness. PhantomData is there to shut up the unused type parameter error (I still
 // don't understand why passing a type parameter into a trait bound doesn't count as "using" it).
-unsafe impl<M, EI> Send for ImmediateIO<M, EI>
-where
-    M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface,
-{
-}
 unsafe impl<M, EI> Sync for ImmediateIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
