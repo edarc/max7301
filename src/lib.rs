@@ -14,3 +14,8 @@ pub mod config;
 pub mod expander;
 pub mod interface;
 pub mod registers;
+
+pub use config::PortMode;
+pub use expander::Expander;
+pub use interface::spi::SpiInterface;
+pub use interface::ExpanderInterface;
