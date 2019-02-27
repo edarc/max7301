@@ -10,27 +10,27 @@ use mutex::IOMutex;
 use registers::valid_port;
 
 /// Control how `TransactionalIO::write_back` will batch writes to modified pins.
-pub enum Batching {
-    /// This mode will issue writes such that only the ports that have had output values explicitly
-    /// set through the `OutputPin` impl will be altered.
+pub enum Strategy {
+    /// This strategy will issue writes such that only the ports that have had output values
+    /// explicitly set through the `OutputPin` impl will be altered.
     ///
-    /// This is the safest but least efficient write back mode.
+    /// This is the safest but least efficient write back strategy.
     Exact,
 
-    /// This mode will relax the write back batching so that it may overwrite any port that had its
-    /// state read and cached in the most recent `refresh` call.
+    /// This strategy will relax the write back batching so that it may overwrite any port that had
+    /// its state read and cached in the most recent `refresh` call.
     ///
     /// This means that some port registers may be "stomped" by writing values that match the
     /// values they had when `refresh` was called. This is true regardless of whether the port is
     /// configured as an input or output pin.
     StompClean,
 
-    /// This mode will further relax the write-back batching so that may potentially overwrite
+    /// This strategy will further relax the write-back batching so that may potentially overwrite
     /// *any* port, even if the previous value was not read in a `refresh`.
     ///
     /// Any ports that were not read in a `refresh` will be overwritten with an undefined value.
-    /// This mode makes most efficient use of the bus when most pins are output pins, but is only
-    /// usable if you call `port_pin` for every port you care about, and *either*
+    /// This strategy makes most efficient use of the bus when most pins are output pins, but is
+    /// only usable if you call `port_pin` for every port you care about, and *either*
     ///
     /// * Explicitly set every pin whose value you care about before each `write_back` call, or
     /// * Call `refresh` first before setting any pins.
@@ -119,15 +119,15 @@ where
     }
 
     /// Write back any pending `OutputPin` operations to the MAX7301. The strategy used to do this
-    /// is controlled by `mode` (see [`Batching`] docs for a description of the available
+    /// is controlled by `strategy` (see [`Strategy`] docs for a description of the available
     /// strategies).
-    pub fn write_back(&self, mode: Batching) -> Result<(), ()> {
+    pub fn write_back(&self, strategy: Strategy) -> Result<(), ()> {
         let mut start_port = 0;
         let mut ports_to_write = self.dirty.load(Ordering::Acquire);
-        let mut ok_to_write = match mode {
-            Batching::Exact => ports_to_write,
-            Batching::StompClean => self.fresh.load(Ordering::Acquire),
-            Batching::StompAny => 0xFFFFFFFC,
+        let mut ok_to_write = match strategy {
+            Strategy::Exact => ports_to_write,
+            Strategy::StompClean => self.fresh.load(Ordering::Acquire),
+            Strategy::StompAny => 0xFFFFFFFC,
         };
         let cache = self.cache.load(Ordering::Acquire);
         while ports_to_write != 0 {
@@ -177,7 +177,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::Batching;
+    use super::Strategy;
     use expander::Expander;
     use hal::digital::{InputPin, OutputPin};
     use interface::test_spy::{TestRegister as TR, TestSpyInterface};
@@ -289,7 +289,7 @@ mod tests {
 
         pin_twelve.set_high();
         assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
-        assert!(io.write_back(Batching::Exact).is_ok());
+        assert!(io.write_back(Strategy::Exact).is_ok());
         assert_eq!(ei.get(0x2C), TR::WrittenValue(0x01));
     }
 
@@ -304,7 +304,7 @@ mod tests {
         pin_fifteen.set_high();
         assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
         assert_eq!(ei.get(0x2F), TR::ResetValue(0x00));
-        assert!(io.write_back(Batching::Exact).is_ok());
+        assert!(io.write_back(Strategy::Exact).is_ok());
         assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
         assert_eq!(ei.get(0x2F), TR::WrittenValue(0b00000001));
     }
@@ -320,7 +320,7 @@ mod tests {
 
         eight_pins.iter_mut().for_each(|p| p.set_high());
         assert_eq!(ei.get(0x4B), TR::ResetValue(0b00000000));
-        assert!(io.write_back(Batching::Exact).is_ok());
+        assert!(io.write_back(Strategy::Exact).is_ok());
         assert_eq!(ei.get(0x4B), TR::WrittenValue(0b11111111));
     }
 
@@ -337,7 +337,7 @@ mod tests {
         pin_twelve.set_high();
         pin_fifteen.set_high();
         assert_eq!(ei.get(0x4C), TR::ResetValue(0b00100000));
-        assert!(io.write_back(Batching::StompClean).is_ok());
+        assert!(io.write_back(Strategy::StompClean).is_ok());
         assert_eq!(ei.get(0x4C), TR::WrittenValue(0b00101001));
     }
 
@@ -352,7 +352,7 @@ mod tests {
         pin_fifteen.set_high();
         assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
         assert_eq!(ei.get(0x2F), TR::ResetValue(0x00));
-        assert!(io.write_back(Batching::StompClean).is_ok());
+        assert!(io.write_back(Strategy::StompClean).is_ok());
         assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
         assert_eq!(ei.get(0x2F), TR::WrittenValue(0b00000001));
     }
@@ -367,7 +367,7 @@ mod tests {
         pin_twelve.set_high();
         pin_fifteen.set_high();
         assert_eq!(ei.get(0x4C), TR::ResetValue(0x00));
-        assert!(io.write_back(Batching::StompAny).is_ok());
+        assert!(io.write_back(Strategy::StompAny).is_ok());
         assert_eq!(ei.get(0x4C), TR::WrittenValue(0b00001001));
     }
 
@@ -384,7 +384,7 @@ mod tests {
         pin_twelve.set_high();
         // Port twelve is dirty, but 13 is not fresh. Do not stomp it.
 
-        assert!(io.write_back(Batching::StompClean).is_ok());
+        assert!(io.write_back(Strategy::StompClean).is_ok());
         assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
     }
 }
