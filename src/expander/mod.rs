@@ -3,12 +3,14 @@
 
 use config::{BankConfig, Configurator, ExpanderConfig};
 use expander::immediate::ImmediateIO;
+use expander::transactional::TransactionalIO;
 use interface::ExpanderInterface;
 use mutex::IOMutex;
 use registers::Register;
 
 pub mod immediate;
 pub mod pin;
+pub mod transactional;
 
 /// The port expander device itself.
 pub struct Expander<EI: ExpanderInterface> {
@@ -34,6 +36,10 @@ impl<EI: ExpanderInterface> Expander<EI> {
 
     pub fn into_immediate<M: IOMutex<Self>>(self) -> ImmediateIO<M, EI> {
         ImmediateIO::new(self)
+    }
+
+    pub fn into_transactional<M: IOMutex<Self>>(self) -> TransactionalIO<M, EI> {
+        TransactionalIO::new(self)
     }
 
     /// Perform a read of the current value of a single I/O port on the expander.
@@ -62,6 +68,18 @@ impl<EI: ExpanderInterface> Expander<EI> {
             Register::SinglePort(port).into(),
             if bit { 0x01 } else { 0x00 },
         )
+    }
+
+    /// Write a value to 8 consecutive I/O ports on the expander in a single bus transaction.
+    ///
+    /// There is no alignment requirement; the `start_port` may be any valid port, and that port
+    /// along with up to 7 following ports will be written in one transaction. `bits` is a `u8`
+    /// where the LSB is the value to write to `start_port`, and each higher bit is the 7 ports
+    /// following it in ascending order. If any of the bits would correspond to a port higher than
+    /// 31, then those bits will be ignored.
+    pub fn write_ports(&mut self, start_port: u8, bits: u8) -> Result<(), ()> {
+        self.iface
+            .write_register(Register::PortRange(start_port).into(), bits)
     }
 
     pub(crate) fn write_config(&mut self) -> Result<(), ()> {

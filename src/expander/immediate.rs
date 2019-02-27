@@ -19,8 +19,7 @@ where
 // Unsafety: This is only needed because the presence of PhantomData<EI> causes the struct to no
 // longer be Sync, because EI is often not Sync since it owns a global resource (e.g. SPI device).
 // However, the EI is actually owned by the Expander which is in the mutex which normally
-// re-instates Sync-ness. PhantomData is there to shut up the unused type parameter error (I still
-// don't understand why passing a type parameter into a trait bound doesn't count as "using" it).
+// re-instates Sync-ness. PhantomData is there to shut up the unused type parameter error.
 unsafe impl<M, EI> Sync for ImmediateIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
