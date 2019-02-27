@@ -9,6 +9,29 @@ use interface::ExpanderInterface;
 use mutex::IOMutex;
 use registers::valid_port;
 
+/// Control how `TransactionalIO::write_back` will batch writes to modified pins.
+pub enum Batching {
+    /// This mode will issue writes such that only the ports that have had output values explicitly
+    /// set through the `OutputPin` impl will be altered. This is the safest but least efficient
+    /// write back mode.
+    Exact,
+
+    /// This mode will relax the write back batching so that it may overwrite any port that had its
+    /// state read and cached in the most recent `refresh` call. This means that some port
+    /// registers may be "stomped" by writing values that match the values they had when `refresh`
+    /// was called. This is true regardless of whether the port is configured as an input or output
+    /// pin.
+    StompClean,
+
+    /// This mode will further relax the write-back batching so that may potentially overwrite
+    /// *any* port, even if the previous value was not read in a `refresh` (in which case such
+    /// ports will be overwritten with an undefined value). This makes most efficient use of the
+    /// bus, but is only usable if you 1) have called `port_pin` for every port you care about, and
+    /// either 2a) explicitly set every pin whose value you care about before each `write_back`
+    /// call, or 2b) you call `refresh` first before setting any pins.
+    StompAny,
+}
+
 /// This I/O adapter captures the `Expander` and provides a factory for generating GPIO pins that
 /// implement `InputPin` and `OutputPin` traits. Each such pin will read its input state from a
 /// cached batch read at the beginning of a transaction, and will write its input state into a
@@ -24,6 +47,7 @@ where
     issued: AtomicUsize,
     cache: AtomicUsize,
     dirty: AtomicUsize,
+    fresh: AtomicUsize,
     _ei: PhantomData<EI>,
 }
 
@@ -49,6 +73,7 @@ where
             issued: AtomicUsize::default(),
             cache: AtomicUsize::default(),
             dirty: AtomicUsize::default(),
+            fresh: AtomicUsize::default(),
             _ei: PhantomData,
         }
     }
@@ -70,6 +95,7 @@ where
     pub fn refresh(&self) -> Result<(), ()> {
         self.dirty.store(0, Ordering::Release);
         let mut load_buffer = 0usize;
+        let mut fresh_buffer = 0usize;
         let mut start_port = 4;
         let mut ports_to_read = self.issued.load(Ordering::Relaxed) >> start_port;
         while ports_to_read != 0 {
@@ -78,22 +104,30 @@ where
             start_port += skip;
             let port_values = self.expander.lock(|ex| ex.read_ports(start_port as u8))?;
             load_buffer |= (port_values as usize) << start_port;
+            fresh_buffer |= 0xFFusize << start_port;
             ports_to_read &= !0xFFusize;
         }
         self.cache.store(load_buffer, Ordering::Relaxed);
+        self.fresh.store(fresh_buffer, Ordering::Relaxed);
         Ok(())
     }
 
     /// Write back any pending `OutputPin` operations to the MAX7301.
-    pub fn write_back(&self) -> Result<(), ()> {
+    pub fn write_back(&self, mode: Batching) -> Result<(), ()> {
         let mut start_port = 0;
         let mut ports_to_write = self.dirty.load(Ordering::Acquire);
+        let mut ok_to_write = match mode {
+            Batching::Exact => ports_to_write,
+            Batching::StompClean => self.fresh.load(Ordering::Acquire),
+            Batching::StompAny => 0xFFFFFFFC,
+        };
         let cache = self.cache.load(Ordering::Acquire);
         while ports_to_write != 0 {
             let skip = ports_to_write.trailing_zeros();
             ports_to_write >>= skip;
+            ok_to_write >>= skip;
             start_port += skip;
-            if ports_to_write & 0xFF == 0xFF {
+            if ok_to_write & 0xFF == 0xFF {
                 let port_values = (cache >> start_port) as u8;
                 self.expander
                     .lock(|ex| ex.write_ports(start_port as u8, port_values))?;
@@ -123,14 +157,19 @@ where
             self.cache.fetch_and(!or_bit, Ordering::Release);
         }
         self.dirty.fetch_or(or_bit, Ordering::Relaxed);
+        self.fresh.fetch_or(or_bit, Ordering::Relaxed);
     }
     fn read_port(&self, port: u8) -> bool {
+        if self.fresh.load(Ordering::Relaxed) & (1 << port) == 0 {
+            panic!("Read of un-refreshed port;}")
+        }
         self.cache.load(Ordering::Relaxed) & (1 << port) != 0
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::Batching;
     use expander::Expander;
     use hal::digital::{InputPin, OutputPin};
     use interface::test_spy::{TestRegister as TR, TestSpyInterface};
@@ -149,6 +188,16 @@ mod tests {
         ei.set(0x4C, TR::ResetValue(0x01));
         assert!(io.refresh().is_ok());
         assert_eq!(pin_twelve.is_high(), true);
+    }
+
+    #[test]
+    #[should_panic]
+    fn read_unrefreshed_panics() {
+        let ei = TestSpyInterface::new();
+        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+        let pin_twelve = io.port_pin(12);
+
+        pin_twelve.is_high();
     }
 
     #[test]
@@ -225,19 +274,19 @@ mod tests {
     }
 
     #[test]
-    fn single_pin_write() {
+    fn single_pin_write_exact() {
         let ei = TestSpyInterface::new();
         let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
         let mut pin_twelve = io.port_pin(12);
 
         pin_twelve.set_high();
         assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
-        assert!(io.write_back().is_ok());
+        assert!(io.write_back(Batching::Exact).is_ok());
         assert_eq!(ei.get(0x2C), TR::WrittenValue(0x01));
     }
 
     #[test]
-    fn multi_pin_write_single_port_registers() {
+    fn multi_pin_write_exact_single_port_registers() {
         let ei = TestSpyInterface::new();
         let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
         let mut pin_twelve = io.port_pin(12);
@@ -247,13 +296,13 @@ mod tests {
         pin_fifteen.set_high();
         assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
         assert_eq!(ei.get(0x2F), TR::ResetValue(0x00));
-        assert!(io.write_back().is_ok());
+        assert!(io.write_back(Batching::Exact).is_ok());
         assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
         assert_eq!(ei.get(0x2F), TR::WrittenValue(0b00000001));
     }
 
     #[test]
-    fn multi_pin_write_multi_port_register() {
+    fn multi_pin_write_exact_multi_port_register() {
         let ei = TestSpyInterface::new();
         let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
         let mut eight_pins = (11..=18)
@@ -263,7 +312,71 @@ mod tests {
 
         eight_pins.iter_mut().for_each(|p| p.set_high());
         assert_eq!(ei.get(0x4B), TR::ResetValue(0b00000000));
-        assert!(io.write_back().is_ok());
+        assert!(io.write_back(Batching::Exact).is_ok());
         assert_eq!(ei.get(0x4B), TR::WrittenValue(0b11111111));
+    }
+
+    #[test]
+    fn multi_pin_write_clean_after_refresh_single_range_register() {
+        let mut ei = TestSpyInterface::new();
+        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+        let mut pin_twelve = io.port_pin(12);
+        let mut pin_fifteen = io.port_pin(15);
+        let _pin_seventeen = io.port_pin(17);
+
+        ei.set(0x4C, TR::ResetValue(0b00100000));
+        assert!(io.refresh().is_ok());
+        pin_twelve.set_high();
+        pin_fifteen.set_high();
+        assert_eq!(ei.get(0x4C), TR::ResetValue(0b00100000));
+        assert!(io.write_back(Batching::StompClean).is_ok());
+        assert_eq!(ei.get(0x4C), TR::WrittenValue(0b00101001));
+    }
+
+    #[test]
+    fn multi_pin_write_clean_no_refresh_single_port_registers() {
+        let ei = TestSpyInterface::new();
+        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+        let mut pin_twelve = io.port_pin(12);
+        let mut pin_fifteen = io.port_pin(15);
+
+        pin_twelve.set_high();
+        pin_fifteen.set_high();
+        assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
+        assert_eq!(ei.get(0x2F), TR::ResetValue(0x00));
+        assert!(io.write_back(Batching::StompClean).is_ok());
+        assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
+        assert_eq!(ei.get(0x2F), TR::WrittenValue(0b00000001));
+    }
+
+    #[test]
+    fn multi_pin_write_any_no_refresh_single_range_register() {
+        let ei = TestSpyInterface::new();
+        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+        let mut pin_twelve = io.port_pin(12);
+        let mut pin_fifteen = io.port_pin(15);
+
+        pin_twelve.set_high();
+        pin_fifteen.set_high();
+        assert_eq!(ei.get(0x4C), TR::ResetValue(0x00));
+        assert!(io.write_back(Batching::StompAny).is_ok());
+        assert_eq!(ei.get(0x4C), TR::WrittenValue(0b00001001));
+    }
+
+    #[test]
+    fn multi_pin_write_clean_dont_stomp_unrefreshed() {
+        let ei = TestSpyInterface::new();
+        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+
+        let _pin_fourteen = io.port_pin(14);
+        assert!(io.refresh().is_ok());
+        // Ports 14-21 are clean.
+
+        let mut pin_twelve = io.port_pin(12);
+        pin_twelve.set_high();
+        // Port twelve is dirty, but 13 is not fresh. Do not stomp it.
+
+        assert!(io.write_back(Batching::StompClean).is_ok());
+        assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
     }
 }
