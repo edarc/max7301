@@ -53,12 +53,20 @@ where
         }
     }
 
+    /// Create a `Pin` corresponding to one of the ports on the MAX7301. The returned `Pin`
+    /// implements `InputPin` and `OutputPin`, and using any of the methods from these traits on
+    /// the returned `Pin` will read or write the value of the I/O port from a local write-back
+    /// cache. Refreshing or writing back the cache is controlled by `refresh` and `write_back`.
     pub fn port_pin<'io>(&'io self, port: u8) -> Pin<'io, Self> {
         self.issued
             .fetch_or(1 << valid_port(port), Ordering::Relaxed);
         Pin::new(self, port)
     }
 
+    /// Refresh the local cache by reading the port values from any outstanding `Pin`s issued from
+    /// this adapter, updating the values read through their `InputPin` impls. This is done using
+    /// batch registers of MAX7301 to reduce bus traffic. All pending `OutputPin` operations are
+    /// discarded.
     pub fn refresh(&self) -> Result<(), ()> {
         self.dirty.store(0, Ordering::Release);
         let mut load_buffer = 0usize;
@@ -76,6 +84,7 @@ where
         Ok(())
     }
 
+    /// Write back any pending `OutputPin` operations to the MAX7301.
     pub fn write_back(&self) -> Result<(), ()> {
         let mut start_port = 0;
         let mut ports_to_write = self.dirty.load(Ordering::Acquire);
