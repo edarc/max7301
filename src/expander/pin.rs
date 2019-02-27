@@ -23,18 +23,18 @@ pub trait ExpanderIO {
 /// A single I/O pin on the MAX7301. These implement the `embedded-hal` traits for GPIO pins so
 /// they can be used to transparently connect devices driven over GPIOs through the MAX7301
 /// instead, and their `embedded-hal`-compatible drivers can be used without modification.
-pub struct Pin<'io, IO: ExpanderIO> {
+pub struct PortPin<'io, IO: ExpanderIO> {
     io: &'io IO,
     port: u8,
 }
 
-impl<'io, IO: ExpanderIO> Pin<'io, IO> {
+impl<'io, IO: ExpanderIO> PortPin<'io, IO> {
     pub(crate) fn new(io: &'io IO, port: u8) -> Self {
         Self { io, port }
     }
 }
 
-impl<'io, IO: ExpanderIO> OutputPin for Pin<'io, IO> {
+impl<'io, IO: ExpanderIO> OutputPin for PortPin<'io, IO> {
     fn set_high(&mut self) {
         self.io.write_port(self.port, true)
     }
@@ -44,7 +44,7 @@ impl<'io, IO: ExpanderIO> OutputPin for Pin<'io, IO> {
 }
 
 #[cfg(feature = "unproven")]
-impl<'io, IO: ExpanderIO> InputPin for Pin<'io, IO> {
+impl<'io, IO: ExpanderIO> InputPin for PortPin<'io, IO> {
     fn is_high(&self) -> bool {
         self.io.read_port(self.port)
     }

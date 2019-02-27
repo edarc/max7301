@@ -18,7 +18,8 @@ pub mod registers;
 
 pub use config::PortMode;
 pub use expander::immediate::ImmediateIO;
-pub use expander::pin::{ExpanderIO, Pin};
+pub use expander::pin::{ExpanderIO, PortPin};
+pub use expander::transactional::{Batching, TransactionalIO};
 pub use expander::Expander;
 pub use interface::spi::SpiInterface;
 pub use interface::ExpanderInterface;

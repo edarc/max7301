@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use expander::pin::{ExpanderIO, Pin};
+use expander::pin::{ExpanderIO, PortPin};
 use expander::Expander;
 use interface::ExpanderInterface;
 use mutex::IOMutex;
@@ -42,12 +42,12 @@ where
     //     self.0.into_inner()
     // }
 
-    /// Create a `Pin` corresponding to one of the ports on the MAX7301. The returned `Pin`
+    /// Create a `PortPin` corresponding to one of the ports on the MAX7301. The returned `PortPin`
     /// implements `InputPin` and `OutputPin`, and using any of the methods from these traits on
-    /// the returned `Pin` will trigger a bus transaction to immediately read or write the value of
-    /// that I/O port.
-    pub fn port_pin<'io>(&'io self, port: u8) -> Pin<'io, Self> {
-        Pin::new(self, valid_port(port))
+    /// the returned `PortPin` will trigger a bus transaction to immediately read or write the
+    /// value of that I/O port.
+    pub fn port_pin<'io>(&'io self, port: u8) -> PortPin<'io, Self> {
+        PortPin::new(self, valid_port(port))
     }
 }
 

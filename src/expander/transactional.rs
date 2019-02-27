@@ -3,7 +3,7 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use expander::pin::{ExpanderIO, Pin};
+use expander::pin::{ExpanderIO, PortPin};
 use expander::Expander;
 use interface::ExpanderInterface;
 use mutex::IOMutex;
@@ -12,32 +12,38 @@ use registers::valid_port;
 /// Control how `TransactionalIO::write_back` will batch writes to modified pins.
 pub enum Batching {
     /// This mode will issue writes such that only the ports that have had output values explicitly
-    /// set through the `OutputPin` impl will be altered. This is the safest but least efficient
-    /// write back mode.
+    /// set through the `OutputPin` impl will be altered.
+    ///
+    /// This is the safest but least efficient write back mode.
     Exact,
 
     /// This mode will relax the write back batching so that it may overwrite any port that had its
-    /// state read and cached in the most recent `refresh` call. This means that some port
-    /// registers may be "stomped" by writing values that match the values they had when `refresh`
-    /// was called. This is true regardless of whether the port is configured as an input or output
-    /// pin.
+    /// state read and cached in the most recent `refresh` call.
+    ///
+    /// This means that some port registers may be "stomped" by writing values that match the
+    /// values they had when `refresh` was called. This is true regardless of whether the port is
+    /// configured as an input or output pin.
     StompClean,
 
     /// This mode will further relax the write-back batching so that may potentially overwrite
-    /// *any* port, even if the previous value was not read in a `refresh` (in which case such
-    /// ports will be overwritten with an undefined value). This makes most efficient use of the
-    /// bus, but is only usable if you 1) have called `port_pin` for every port you care about, and
-    /// either 2a) explicitly set every pin whose value you care about before each `write_back`
-    /// call, or 2b) you call `refresh` first before setting any pins.
+    /// *any* port, even if the previous value was not read in a `refresh`.
+    ///
+    /// Any ports that were not read in a `refresh` will be overwritten with an undefined value.
+    /// This mode makes most efficient use of the bus when most pins are output pins, but is only
+    /// usable if you call `port_pin` for every port you care about, and *either*
+    ///
+    /// * Explicitly set every pin whose value you care about before each `write_back` call, or
+    /// * Call `refresh` first before setting any pins.
     StompAny,
 }
 
 /// This I/O adapter captures the `Expander` and provides a factory for generating GPIO pins that
-/// implement `InputPin` and `OutputPin` traits. Each such pin will read its input state from a
-/// cached batch read at the beginning of a transaction, and will write its input state into a
-/// write-back buffer that is committed with a batch write at the end of the transaction. This
-/// reduces bus traffic due to the MAX7301's support for reading or writing 8 consecutive ports in
-/// a single operation.
+/// implement `InputPin` and `OutputPin` traits backed by a transactional write-back cache.
+///
+/// Each such pin will read its input state from a cached batch read at the beginning of a
+/// transaction, and will write its input state into a write-back buffer that is committed with a
+/// batch write at the end of the transaction. This reduces bus traffic due to the MAX7301's
+/// support for reading or writing 8 consecutive ports in a single operation.
 pub struct TransactionalIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
@@ -78,20 +84,20 @@ where
         }
     }
 
-    /// Create a `Pin` corresponding to one of the ports on the MAX7301. The returned `Pin`
+    /// Create a `PortPin` corresponding to one of the ports on the MAX7301. The returned `PortPin`
     /// implements `InputPin` and `OutputPin`, and using any of the methods from these traits on
-    /// the returned `Pin` will read or write the value of the I/O port from a local write-back
+    /// the returned `PortPin` will read or write the value of the I/O port from a local write-back
     /// cache. Refreshing or writing back the cache is controlled by `refresh` and `write_back`.
-    pub fn port_pin<'io>(&'io self, port: u8) -> Pin<'io, Self> {
+    pub fn port_pin<'io>(&'io self, port: u8) -> PortPin<'io, Self> {
         self.issued
             .fetch_or(1 << valid_port(port), Ordering::Relaxed);
-        Pin::new(self, port)
+        PortPin::new(self, port)
     }
 
-    /// Refresh the local cache by reading the port values from any outstanding `Pin`s issued from
-    /// this adapter, updating the values read through their `InputPin` impls. This is done using
-    /// batch registers of MAX7301 to reduce bus traffic. All pending `OutputPin` operations are
-    /// discarded.
+    /// Refresh the local cache by reading the port values from any outstanding `PortPin`s issued
+    /// from this adapter, updating the values read through their `InputPin` impls. This is done
+    /// using batch registers of MAX7301 to reduce bus traffic. All pending `OutputPin` operations
+    /// are discarded.
     pub fn refresh(&self) -> Result<(), ()> {
         self.dirty.store(0, Ordering::Release);
         let mut load_buffer = 0usize;
@@ -112,7 +118,9 @@ where
         Ok(())
     }
 
-    /// Write back any pending `OutputPin` operations to the MAX7301.
+    /// Write back any pending `OutputPin` operations to the MAX7301. The strategy used to do this
+    /// is controlled by `mode` (see [`Batching`] docs for a description of the available
+    /// strategies).
     pub fn write_back(&self, mode: Batching) -> Result<(), ()> {
         let mut start_port = 0;
         let mut ports_to_write = self.dirty.load(Ordering::Acquire);
