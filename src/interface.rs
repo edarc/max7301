@@ -122,6 +122,7 @@ pub(crate) mod test_spy {
     use super::ExpanderInterface;
     use registers::RegisterAddress;
     use std::cell::RefCell;
+    use std::fmt;
     use std::rc::Rc;
 
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -213,6 +214,164 @@ pub(crate) mod test_spy {
                 TestRegister::ResetValue(v) => Ok(v),
                 TestRegister::WrittenValue(v) => Ok(v),
             }
+        }
+    }
+
+    #[derive(Copy, Clone, PartialEq)]
+    pub enum TestPort {
+        Reset(bool),
+        Read(bool),
+        BlindWrite(bool),
+        ReadWrite(bool),
+    }
+
+    impl fmt::Debug for TestPort {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            use self::TestPort::*;
+            let (bit, status) = match *self {
+                Reset(b) => (b, '_'),
+                Read(b) => (b, 'r'),
+                BlindWrite(b) => (b, 'X'),
+                ReadWrite(b) => (b, 'w'),
+            };
+            let bit_fmt = if bit { '1' } else { '0' };
+            write!(f, "{}{}", status, bit_fmt)
+        }
+    }
+
+    pub struct SemanticTestSpyInterface {
+        ports: Rc<RefCell<Vec<TestPort>>>,
+    }
+
+    impl SemanticTestSpyInterface {
+        pub fn new(init: Vec<bool>) -> Self {
+            assert!(init.len() == 32 - 4);
+            Self {
+                ports: Rc::new(RefCell::new(
+                    init.into_iter()
+                        .map(|b| TestPort::Reset(b))
+                        .collect::<Vec<_>>(),
+                )),
+            }
+        }
+
+        pub fn split(&self) -> Self {
+            Self {
+                ports: self.ports.clone(),
+            }
+        }
+
+        pub fn peek_all(&self) -> Vec<TestPort> {
+            use self::TestPort::*;
+            self.ports
+                .borrow()
+                .iter()
+                .cloned()
+                .map(|v| match v {
+                    Read(b) => Reset(b),
+                    other => other,
+                })
+                .collect()
+        }
+
+        pub fn peek_bits(&self) -> Vec<bool> {
+            use self::TestPort::*;
+            self.ports
+                .borrow()
+                .iter()
+                .cloned()
+                .map(|v| match v {
+                    Reset(b) | Read(b) | BlindWrite(b) | ReadWrite(b) => b,
+                })
+                .collect()
+        }
+
+        fn write_port(&self, port: u8, bit: bool) {
+            use self::TestPort::*;
+            let idx = port as usize - 4;
+            let slot_ref = &mut self.ports.borrow_mut()[idx];
+            *slot_ref = match slot_ref {
+                Reset(_) | BlindWrite(_) => BlindWrite(bit),
+                Read(_) | ReadWrite(_) => ReadWrite(bit),
+            };
+        }
+
+        fn read_port(&self, port: u8) -> bool {
+            use self::TestPort::*;
+            let idx = port as usize - 4;
+            let slot_ref = &mut self.ports.borrow_mut()[idx];
+            let (upd, ret) = match slot_ref {
+                Reset(b) | Read(b) => (Read(*b), *b),
+                ReadWrite(b) => (ReadWrite(*b), *b),
+                BlindWrite(b) => (BlindWrite(*b), *b),
+            };
+            *slot_ref = upd;
+            ret
+        }
+    }
+
+    impl fmt::Debug for SemanticTestSpyInterface {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(
+                f,
+                "[ {} ]",
+                self.ports
+                    .borrow()
+                    .iter()
+                    .map(|&v| format!("{:?}", v))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        }
+    }
+
+    impl ExpanderInterface for SemanticTestSpyInterface {
+        fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()> {
+            match u8::from(addr) {
+                single @ 0x24...0x3F => {
+                    let port = single - 0x20;
+                    self.write_port(port, (value & 0x01) == 1);
+                }
+                multi @ 0x44...0x5F => {
+                    let start_port = multi - 0x40;
+                    for port_offset in 0..8 {
+                        let port = start_port + port_offset;
+                        if port <= 31 {
+                            self.write_port(port, (value & 1 << port_offset) != 0);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()> {
+            Ok(match u8::from(addr) {
+                single @ 0x24...0x3F => {
+                    let port = single - 0x20;
+                    if self.read_port(port) {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                multi @ 0x44...0x5F => {
+                    let start_port = multi - 0x40;
+                    let mut bits = 0u8;
+                    for port_offset in 0..8 {
+                        let port = start_port + port_offset;
+                        if port <= 31 {
+                            bits |= if self.read_port(port) {
+                                1 << port_offset
+                            } else {
+                                0
+                            }
+                        }
+                    }
+                    bits
+                }
+                _ => 0,
+            })
         }
     }
 }
