@@ -180,211 +180,246 @@ mod tests {
     use super::Strategy;
     use expander::Expander;
     use hal::digital::{InputPin, OutputPin};
-    use interface::test_spy::{TestRegister as TR, TestSpyInterface};
+    use interface::test_spy::{SemanticTestSpyInterface, TestPort};
     use mutex::DefaultMutex;
+    use proptest::collection::vec;
+    use proptest::prelude::*;
 
-    #[test]
-    fn single_pin_read() {
-        let mut ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let pin_twelve = io.port_pin(12);
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2000))]
 
-        ei.set(0x4C, TR::ResetValue(0x00));
-        assert!(io.refresh().is_ok());
-        assert_eq!(pin_twelve.is_high(), false);
+        #[test]
+        fn prop_read_unrefreshed_panics(
+            reset in vec(any::<bool>(), 32 - 4),
+            pin in 4..=31u8
+        ) {
+            assert!(std::panic::catch_unwind(|| {
+                let ei = SemanticTestSpyInterface::new(reset);
+                let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+                let any_pin = io.port_pin(pin);
 
-        ei.set(0x4C, TR::ResetValue(0x01));
-        assert!(io.refresh().is_ok());
-        assert_eq!(pin_twelve.is_high(), true);
-    }
+                any_pin.is_high();
+            })
+            .is_err());
+        }
 
-    #[test]
-    #[should_panic]
-    fn read_unrefreshed_panics() {
-        let ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let pin_twelve = io.port_pin(12);
+        #[test]
+        fn prop_read_refreshed_ok(
+            reset in vec(any::<bool>(), 32 - 4),
+            pins in vec(4..=31u8, 0..=28)
+        ) {
+            let ei = SemanticTestSpyInterface::new(reset.clone());
+            let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+            let some_pins = pins
+                .iter()
+                .cloned()
+                .map(|p| io.port_pin(p))
+                .collect::<Vec<_>>();
 
-        pin_twelve.is_high();
-    }
+            assert!(io.refresh().is_ok());
+            for (idx, pin_nr) in pins.iter().enumerate() {
+                assert_eq!(some_pins[idx].is_high(), reset[*pin_nr as usize - 4]);
+            }
+        }
 
-    #[test]
-    fn multi_pin_read_single_register() {
-        let mut ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let pin_twelve = io.port_pin(12);
-        let pin_fifteen = io.port_pin(15);
+        // Precisely the pins that were modified will be written back using blind writes. No other
+        // ports should be written.
+        #[test]
+        fn prop_write_exact_no_refresh(
+            reset in vec(any::<bool>(), 32 - 4),
+            pins_and_bits in vec((4..=31u8, any::<bool>()), 0..=28),
+        ) {
+            let ei = SemanticTestSpyInterface::new(reset.clone());
+            let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+            let mut some_pins = pins_and_bits
+                .iter()
+                .cloned()
+                .map(|(p, b)| (p, io.port_pin(p), b))
+                .collect::<Vec<_>>();
+            let mut expect = (4..=31)
+                .into_iter()
+                .map(|p| TestPort::Reset(reset[p as usize - 4]))
+                .collect::<Vec<_>>();
 
-        ei.set(0x4C, TR::ResetValue(0b00001001));
-        assert!(io.refresh().is_ok());
-        assert_eq!(pin_twelve.is_high(), true);
-        assert_eq!(pin_fifteen.is_high(), true);
-        assert_eq!(ei.reads(), vec![0x4C]);
-    }
+            for (port, pin, bit) in some_pins.iter_mut() {
+                if *bit {
+                    pin.set_high()
+                } else {
+                    pin.set_low()
+                }
+                expect[*port as usize - 4] = TestPort::BlindWrite(*bit);
+            }
+            assert!(io.write_back(Strategy::Exact).is_ok());
+            assert_eq!(expect, ei.peek_all());
+        }
 
-    #[test]
-    fn multi_pin_read_adjoining_registers() {
-        let mut ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let pin_eleven = io.port_pin(11);
-        let pin_nineteen = io.port_pin(19);
+        // Precisely the pins that were modified will be written back using read-writes. No other
+        // ports should be written.
+        #[test]
+        fn prop_write_exact_with_refresh(
+            reset in vec(any::<bool>(), 32 - 4),
+            pins_and_bits in vec((4..=31u8, any::<bool>()), 0..=28),
+        ) {
+            let ei = SemanticTestSpyInterface::new(reset.clone());
+            let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+            let mut some_pins = pins_and_bits
+                .iter()
+                .cloned()
+                .map(|(p, b)| (p, io.port_pin(p), b))
+                .collect::<Vec<_>>();
+            let mut expect = (4..=31)
+                .into_iter()
+                .map(|p| TestPort::Reset(reset[p as usize - 4]))
+                .collect::<Vec<_>>();
 
-        ei.set(0x4B, TR::ResetValue(0b00000001));
-        ei.set(0x53, TR::ResetValue(0b00000001));
-        assert!(io.refresh().is_ok());
-        assert_eq!(pin_eleven.is_high(), true);
-        assert_eq!(pin_nineteen.is_high(), true);
-        assert_eq!(ei.reads(), vec![0x4B, 0x53]);
-    }
+            assert!(io.refresh().is_ok());
+            for (port, pin, bit) in some_pins.iter_mut() {
+                if *bit {
+                    pin.set_high()
+                } else {
+                    pin.set_low()
+                }
+                expect[*port as usize - 4] = TestPort::ReadWrite(*bit);
+            }
+            assert!(io.write_back(Strategy::Exact).is_ok());
+            assert_eq!(expect, ei.peek_all());
+        }
 
-    #[test]
-    fn multi_pin_read_disjoint_registers() {
-        let mut ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let pin_eleven = io.port_pin(11);
-        let pin_twentytwo = io.port_pin(22);
+        // StompClean strategy should behave identically to Exact strategy if no refresh has
+        // occurred, using blind writes to write exactly the ports whose pin was modified.
+        #[test]
+        fn prop_write_clean_no_refresh(
+            reset in vec(any::<bool>(), 32 - 4),
+            pins_and_bits in vec((4..=31u8, any::<bool>()), 0..=28),
+        ) {
+            let ei = SemanticTestSpyInterface::new(reset.clone());
+            let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+            let mut some_pins = pins_and_bits
+                .iter()
+                .cloned()
+                .map(|(p, b)| (p, io.port_pin(p), b))
+                .collect::<Vec<_>>();
+            let mut expect = (4..=31)
+                .into_iter()
+                .map(|p| TestPort::Reset(reset[p as usize - 4]))
+                .collect::<Vec<_>>();
 
-        ei.set(0x4B, TR::ResetValue(0b00000001));
-        ei.set(0x56, TR::ResetValue(0b00000001));
-        assert!(io.refresh().is_ok());
-        assert_eq!(pin_eleven.is_high(), true);
-        assert_eq!(pin_twentytwo.is_high(), true);
-        assert_eq!(ei.reads(), vec![0x4B, 0x56]);
-    }
+            for (port, pin, bit) in some_pins.iter_mut() {
+                if *bit {
+                    pin.set_high()
+                } else {
+                    pin.set_low()
+                }
+                expect[*port as usize - 4] = TestPort::BlindWrite(*bit);
+            }
+            assert!(io.write_back(Strategy::StompClean).is_ok());
+            assert_eq!(expect, ei.peek_all());
+        }
 
-    #[test]
-    fn multi_pin_read_edges() {
-        let mut ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let pin_four = io.port_pin(4);
-        let pin_thirtyone = io.port_pin(31);
+        // StompClean strategy will preserve all reset values that do not correspond to pins that
+        // were written to. Ports for written pins should contain the new bit. No blind writes
+        // should occur.
+        #[test]
+        fn prop_write_clean_with_refresh(
+            reset in vec(any::<bool>(), 32 - 4),
+            pins_and_bits in vec((4..=31u8, any::<bool>()), 0..=28),
+        ) {
+            let ei = SemanticTestSpyInterface::new(reset.clone());
+            let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+            let mut some_pins = pins_and_bits
+                .iter()
+                .cloned()
+                .map(|(p, b)| (p, io.port_pin(p), b))
+                .collect::<Vec<_>>();
+            let mut expect = reset.clone();
 
-        ei.set(0x44, TR::ResetValue(0b00000001));
-        ei.set(0x5F, TR::ResetValue(0b00000001));
-        assert!(io.refresh().is_ok());
-        assert_eq!(pin_four.is_high(), true);
-        assert_eq!(pin_thirtyone.is_high(), true);
-        assert_eq!(ei.reads(), vec![0x44, 0x5F]);
-    }
+            assert!(io.refresh().is_ok());
+            for (port, pin, bit) in some_pins.iter_mut() {
+                if *bit {
+                    pin.set_high()
+                } else {
+                    pin.set_low()
+                }
+                expect[*port as usize - 4] = *bit;
+            }
+            assert!(io.write_back(Strategy::StompClean).is_ok());
+            assert_eq!(expect, ei.peek_bits());
+            assert!(
+                !ei.peek_all().iter().any(|p| match p {
+                    TestPort::BlindWrite(_) => true,
+                    _ => false,
+                }),
+                "{:?}",
+                ei.peek_all()
+            );
+        }
 
-    #[test]
-    fn multi_pin_read_end_at_upper_edge() {
-        let mut ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let pin_twentyfour = io.port_pin(24);
-        let pin_thirtyone = io.port_pin(31);
+        // StompAny strategy when no refresh is occurred may use blind writes on any ports. The
+        // ports that were written will have the new bits, no other guarantees are given.
+        #[test]
+        fn prop_write_any_no_refresh(
+            reset in vec(any::<bool>(), 32 - 4),
+            pins_and_bits in vec((4..=31u8, any::<bool>()), 0..=28),
+        ) {
+            let ei = SemanticTestSpyInterface::new(reset.clone());
+            let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+            let mut some_pins = pins_and_bits
+                .iter()
+                .cloned()
+                .map(|(p, b)| (p, io.port_pin(p), b))
+                .collect::<Vec<_>>();
+            let mut expect = std::collections::BTreeMap::<u8, bool>::new();
 
-        ei.set(0x58, TR::ResetValue(0b10000001));
-        assert!(io.refresh().is_ok());
-        assert_eq!(pin_twentyfour.is_high(), true);
-        assert_eq!(pin_thirtyone.is_high(), true);
-        assert_eq!(ei.reads(), vec![0x58]);
-    }
+            for (port, pin, bit) in some_pins.iter_mut() {
+                if *bit {
+                    pin.set_high()
+                } else {
+                    pin.set_low()
+                }
+                expect.insert(*port, *bit);
+            }
+            assert!(io.write_back(Strategy::StompAny).is_ok());
+            for (port, bit) in expect.iter() {
+                assert_eq!(
+                    ei.peek_all()[*port as usize - 4],
+                    TestPort::BlindWrite(*bit)
+                );
+            }
+        }
 
-    #[test]
-    fn single_pin_write_exact() {
-        let ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let mut pin_twelve = io.port_pin(12);
+        // StompAny strategy when a refresh has occurred may use blind writes on any ports *that
+        // were not read during the refresh*. Ports that were written will have the new bits, and
+        // no active pin's port will be blindly written. No guarantees are given about other ports.
+        #[test]
+        fn prop_write_any_with_refresh(
+            reset in vec(any::<bool>(), 32 - 4),
+            pins_and_bits in vec((4..=31u8, any::<bool>()), 0..=28),
+        ) {
+            let ei = SemanticTestSpyInterface::new(reset.clone());
+            let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+            let mut some_pins = pins_and_bits
+                .iter()
+                .cloned()
+                .map(|(p, b)| (p, io.port_pin(p), b))
+                .collect::<Vec<_>>();
+            let mut expect = std::collections::BTreeMap::<u8, bool>::new();
 
-        pin_twelve.set_high();
-        assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
-        assert!(io.write_back(Strategy::Exact).is_ok());
-        assert_eq!(ei.get(0x2C), TR::WrittenValue(0x01));
-    }
-
-    #[test]
-    fn multi_pin_write_exact_single_port_registers() {
-        let ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let mut pin_twelve = io.port_pin(12);
-        let mut pin_fifteen = io.port_pin(15);
-
-        pin_twelve.set_high();
-        pin_fifteen.set_high();
-        assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
-        assert_eq!(ei.get(0x2F), TR::ResetValue(0x00));
-        assert!(io.write_back(Strategy::Exact).is_ok());
-        assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
-        assert_eq!(ei.get(0x2F), TR::WrittenValue(0b00000001));
-    }
-
-    #[test]
-    fn multi_pin_write_exact_multi_port_register() {
-        let ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let mut eight_pins = (11..=18)
-            .into_iter()
-            .map(|p| io.port_pin(p))
-            .collect::<Vec<_>>();
-
-        eight_pins.iter_mut().for_each(|p| p.set_high());
-        assert_eq!(ei.get(0x4B), TR::ResetValue(0b00000000));
-        assert!(io.write_back(Strategy::Exact).is_ok());
-        assert_eq!(ei.get(0x4B), TR::WrittenValue(0b11111111));
-    }
-
-    #[test]
-    fn multi_pin_write_clean_after_refresh_single_range_register() {
-        let mut ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let mut pin_twelve = io.port_pin(12);
-        let mut pin_fifteen = io.port_pin(15);
-        let _pin_seventeen = io.port_pin(17);
-
-        ei.set(0x4C, TR::ResetValue(0b00100000));
-        assert!(io.refresh().is_ok());
-        pin_twelve.set_high();
-        pin_fifteen.set_high();
-        assert_eq!(ei.get(0x4C), TR::ResetValue(0b00100000));
-        assert!(io.write_back(Strategy::StompClean).is_ok());
-        assert_eq!(ei.get(0x4C), TR::WrittenValue(0b00101001));
-    }
-
-    #[test]
-    fn multi_pin_write_clean_no_refresh_single_port_registers() {
-        let ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let mut pin_twelve = io.port_pin(12);
-        let mut pin_fifteen = io.port_pin(15);
-
-        pin_twelve.set_high();
-        pin_fifteen.set_high();
-        assert_eq!(ei.get(0x2C), TR::ResetValue(0x00));
-        assert_eq!(ei.get(0x2F), TR::ResetValue(0x00));
-        assert!(io.write_back(Strategy::StompClean).is_ok());
-        assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
-        assert_eq!(ei.get(0x2F), TR::WrittenValue(0b00000001));
-    }
-
-    #[test]
-    fn multi_pin_write_any_no_refresh_single_range_register() {
-        let ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-        let mut pin_twelve = io.port_pin(12);
-        let mut pin_fifteen = io.port_pin(15);
-
-        pin_twelve.set_high();
-        pin_fifteen.set_high();
-        assert_eq!(ei.get(0x4C), TR::ResetValue(0x00));
-        assert!(io.write_back(Strategy::StompAny).is_ok());
-        assert_eq!(ei.get(0x4C), TR::WrittenValue(0b00001001));
-    }
-
-    #[test]
-    fn multi_pin_write_clean_dont_stomp_unrefreshed() {
-        let ei = TestSpyInterface::new();
-        let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-
-        let _pin_fourteen = io.port_pin(14);
-        assert!(io.refresh().is_ok());
-        // Ports 14-21 are clean.
-
-        let mut pin_twelve = io.port_pin(12);
-        pin_twelve.set_high();
-        // Port twelve is dirty, but 13 is not fresh. Do not stomp it.
-
-        assert!(io.write_back(Strategy::StompClean).is_ok());
-        assert_eq!(ei.get(0x2C), TR::WrittenValue(0b00000001));
+            assert!(io.refresh().is_ok());
+            for (port, pin, bit) in some_pins.iter_mut() {
+                if *bit {
+                    pin.set_high()
+                } else {
+                    pin.set_low()
+                }
+                expect.insert(*port, *bit);
+            }
+            assert!(io.write_back(Strategy::StompAny).is_ok());
+            for (port, bit) in expect.iter() {
+                assert_eq!(
+                    ei.peek_all()[*port as usize - 4],
+                    TestPort::ReadWrite(*bit)
+                );
+            }
+        }
     }
 }

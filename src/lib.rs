@@ -7,6 +7,8 @@
 
 #[cfg(feature = "std")]
 extern crate core;
+#[cfg(test)]
+extern crate proptest;
 
 extern crate embedded_hal as hal;
 

@@ -18,6 +18,9 @@ embedded-hal = "0.2"
 version = "0.5.2"
 optional = true
 
+[dev-dependencies]
+proptest = "0.9"
+
 [features]
 default = ["std", "unproven"]
 std = []
