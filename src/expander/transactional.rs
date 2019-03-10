@@ -22,7 +22,8 @@ pub enum Strategy {
     ///
     /// This means that some port registers may be "stomped" by writing values that match the
     /// values they had when `refresh` was called. This is true regardless of whether the port is
-    /// configured as an input or output pin.
+    /// configured as an input or output pin, however ports configured as inputs will remain in
+    /// input mode and the superfluous write to that port is not observable.
     StompClean,
 
     /// This strategy will further relax the write-back batching so that may potentially overwrite
@@ -57,9 +58,9 @@ where
     _ei: PhantomData<EI>,
 }
 
-// Unsafety: This is only needed because the presence of PhantomData<EI> causes the struct to no
-// longer be Sync, because EI is often not Sync since it owns a global resource (e.g. SPI device).
-// However, the EI is actually owned by the Expander which is in the mutex which normally
+// NOTE(unsafe): This is only needed because the presence of PhantomData<EI> causes the struct to
+// no longer be Sync, because EI is often not Sync since it owns a global resource (e.g. SPI
+// device).  However, the EI is actually owned by the Expander which is in the mutex which normally
 // re-instates Sync-ness. PhantomData is there to shut up the unused type parameter error.
 unsafe impl<M, EI> Sync for TransactionalIO<M, EI>
 where
@@ -84,10 +85,12 @@ where
         }
     }
 
-    /// Create a `PortPin` corresponding to one of the ports on the MAX7301. The returned `PortPin`
-    /// implements `InputPin` and `OutputPin`, and using any of the methods from these traits on
-    /// the returned `PortPin` will read or write the value of the I/O port from a local write-back
-    /// cache. Refreshing or writing back the cache is controlled by `refresh` and `write_back`.
+    /// Create a `PortPin` corresponding to one of the ports on the MAX7301.
+    ///
+    /// The returned `PortPin` implements `InputPin` and `OutputPin`, and using any of the methods
+    /// from these traits on the returned `PortPin` will read or write the value of the I/O port
+    /// from a local write-back cache. Refreshing or writing back the cache is controlled by
+    /// `refresh` and `write_back`.
     pub fn port_pin<'io>(&'io self, port: u8) -> PortPin<'io, Self> {
         self.issued
             .fetch_or(1 << valid_port(port), Ordering::Relaxed);
@@ -95,9 +98,10 @@ where
     }
 
     /// Refresh the local cache by reading the port values from any outstanding `PortPin`s issued
-    /// from this adapter, updating the values read through their `InputPin` impls. This is done
-    /// using batch registers of MAX7301 to reduce bus traffic. All pending `OutputPin` operations
-    /// are discarded.
+    /// from this adapter, updating the values read through their `InputPin` impls.
+    ///
+    /// This is done using batch registers of MAX7301 to reduce bus traffic. All pending
+    /// `OutputPin` operations are discarded.
     pub fn refresh(&self) -> Result<(), ()> {
         self.dirty.store(0, Ordering::Release);
         let mut load_buffer = 0usize;
@@ -118,9 +122,10 @@ where
         Ok(())
     }
 
-    /// Write back any pending `OutputPin` operations to the MAX7301. The strategy used to do this
-    /// is controlled by `strategy` (see [`Strategy`] docs for a description of the available
-    /// strategies).
+    /// Write back any pending `OutputPin` operations to the MAX7301.
+    ///
+    /// The strategy used to do this is controlled by `strategy` (see [`Strategy`] docs for a
+    /// description of the available strategies).
     pub fn write_back(&self, strategy: Strategy) -> Result<(), ()> {
         let mut start_port = 0;
         let mut ports_to_write = self.dirty.load(Ordering::Acquire);

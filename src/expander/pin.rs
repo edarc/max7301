@@ -5,8 +5,8 @@ use hal::digital::InputPin;
 use hal::digital::OutputPin;
 
 /// An indirection between I/O pin abstractions and the expander itself, which allows selection
-/// between batched-mode reads and writes, which reduce bus traffic and latency, and immediate-mode
-/// reads and writes, which add more bus traffic and latency but are simpler to use.
+/// between transactional reads and writes, which reduce bus traffic and latency, and
+/// immediate-mode reads and writes, which add more bus traffic and latency but are simpler to use.
 pub trait ExpanderIO {
     /// Write the value of an I/O port. `port` is a port number between 4 and 31; `bit` is the
     /// value to set the port to. If the pin is configured as an output, the value (`true` is
@@ -20,9 +20,9 @@ pub trait ExpanderIO {
     fn read_port(&self, port: u8) -> bool;
 }
 
-/// A single I/O pin on the MAX7301. These implement the `embedded-hal` traits for GPIO pins so
+/// A single I/O pin on the MAX7301. These implement the `embedded-hal` traits for GPIO pins, so
 /// they can be used to transparently connect devices driven over GPIOs through the MAX7301
-/// instead, and their `embedded-hal`-compatible drivers can be used without modification.
+/// instead, using their `embedded-hal`-compatible drivers without modification.
 pub struct PortPin<'io, IO: ExpanderIO> {
     io: &'io IO,
     port: u8,

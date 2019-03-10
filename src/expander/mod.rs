@@ -19,8 +19,10 @@ pub struct Expander<EI: ExpanderInterface> {
 }
 
 impl<EI: ExpanderInterface> Expander<EI> {
-    /// Create a new `Expander`. Takes ownership of the `ExpanderInterface` which it should use to
-    /// communicate with the MAX7301.
+    /// Create a new `Expander`.
+    ///
+    /// Takes ownership of the `ExpanderInterface` which it should use to communicate with the
+    /// MAX7301.
     pub fn new(iface: EI) -> Self {
         Self {
             iface,
@@ -28,16 +30,32 @@ impl<EI: ExpanderInterface> Expander<EI> {
         }
     }
 
-    /// Begin (re)configuring the port expander hardware by returning a `Configurator`. This is a
-    /// builder-like interface that can be used to alter port modes and device configuration bits.
+    /// Begin (re)configuring the port expander hardware by returning a [`Configurator`].
+    ///
+    /// The `Configurator` is a builder-like interface that can be used to alter port modes and
+    /// device configuration bits.
     pub fn configure<'e>(&'e mut self) -> Configurator<'e, EI> {
         Configurator::new(self)
     }
 
+    /// Convert this expander into an immediate-mode I/O adapter.
+    ///
+    /// The I/O adapter can be used to generate individual `PortPin`s that allow
+    /// `embedded-hal`-compatible access to the GPIOs on the expander directly, with every
+    /// operation immediately triggering a bus operation.
+    ///
+    /// See [`ImmediateIO`] for detail.
     pub fn into_immediate<M: IOMutex<Self>>(self) -> ImmediateIO<M, EI> {
         ImmediateIO::new(self)
     }
 
+    /// Convert this expander into a transactional I/O adapter.
+    ///
+    /// The I/O adapter can be used to generate individual `PortPin`s that allow
+    /// `embedded-hal`-compatible access to the GPIOs on the expander. Unlike immediate mode, the
+    /// operations on `PortPin` trait methods are buffered in a write-back cache.
+    ///
+    /// See [`TransactionalIO`] for detail.
     pub fn into_transactional<M: IOMutex<Self>>(self) -> TransactionalIO<M, EI> {
         TransactionalIO::new(self)
     }
