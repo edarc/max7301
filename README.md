@@ -6,8 +6,31 @@ Pure Rust driver for the Maxim MAX7301 serial I/O expander chip, for use with
 ## Description
 
 This driver is intended to work on embedded platforms using the `embedded-hal`
-trait library. It is `no_std`, contains no added `unsafe`, and does not require
-an allocator. The initial release supports the 4-wire SPI interface.
+trait library. It is `no_std` and does not require an allocator. The initial
+release supports the MAX7301 which uses an SPI interface. I would like (and
+have left interfaces) to extend it to support the MAX7300, which is an
+equivalent device with an I2C interface instead.
+
+The driver allows three different styles of using the device:
+
+- A "raw" interface, which exposes minimally-abstracted methods that directly
+  map to the operations the device implements, but which do not map onto
+  `embedded-hal` traits,
+- An *immediate mode* interface, which allows creation of individual, ownable
+  `PortPin` instances that implement the `InputPin` and `OutputPin` traits,
+  where calling any methods from those traits immediately initiates a bus
+  transaction to perform the operation, and
+- A *transactional* interface, which similarly allows creation of `PortPin`
+  instances, but where the HAL trait methods do not generate bus traffic
+  directly, but instead interact with a write-back cache inside the driver.
+  There are additional methods that control when the write-back cache is
+  refreshed or written back, and these methods permit the driver to exploit the
+  device's multi-port registers to reduce the amount of bus traffic and latency
+  substantially in situations where it makes sense.
+
+### Missing features:
+
+- I2C interface for MAX7300 variant.
 
 ## License
 
