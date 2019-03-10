@@ -31,6 +31,10 @@ The driver allows three different styles of using the device:
 ### Missing features:
 
 - I2C interface for MAX7300 variant.
+- Helper methods for using the device's hardware transition detection and
+  interrupt generator. It can be enabled and disabled, but doing so is a bit
+  pointless as there is no method to alter the port mask, and no method to
+  clear the interrupt it once it is triggered.
 
 ## License
 
