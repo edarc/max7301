@@ -48,7 +48,7 @@ pub enum Strategy {
 pub struct TransactionalIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface,
+    EI: ExpanderInterface + Send,
 {
     expander: M,
     issued: AtomicUsize,
@@ -58,21 +58,10 @@ where
     _ei: PhantomData<EI>,
 }
 
-// NOTE(unsafe): This is only needed because the presence of PhantomData<EI> causes the struct to
-// no longer be Sync, because EI is often not Sync since it owns a global resource (e.g. SPI
-// device).  However, the EI is actually owned by the Expander which is in the mutex which normally
-// re-instates Sync-ness. PhantomData is there to shut up the unused type parameter error.
-unsafe impl<M, EI> Sync for TransactionalIO<M, EI>
-where
-    M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface,
-{
-}
-
 impl<M, EI> TransactionalIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface,
+    EI: ExpanderInterface + Send,
 {
     pub(crate) fn new(expander: Expander<EI>) -> Self {
         TransactionalIO {
@@ -160,7 +149,7 @@ where
 impl<M, EI> ExpanderIO for TransactionalIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface,
+    EI: ExpanderInterface + Send,
 {
     fn write_port(&self, port: u8, bit: bool) {
         let or_bit = 1 << port;

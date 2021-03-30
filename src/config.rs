@@ -130,13 +130,13 @@ impl From<ExpanderConfig> for u8 {
 ///     .unwrap();
 /// ```
 #[must_use = "Configuration changes are not applied unless committed"]
-pub struct Configurator<'e, EI: ExpanderInterface> {
+pub struct Configurator<'e, EI: ExpanderInterface + Send> {
     expander: &'e mut Expander<EI>,
     expander_config_dirty: bool,
     banks: [BankConfig; 7],
 }
 
-impl<'e, EI: ExpanderInterface> Configurator<'e, EI> {
+impl<'e, EI: ExpanderInterface + Send> Configurator<'e, EI> {
     pub(crate) fn new(expander: &'e mut Expander<EI>) -> Self {
         Self {
             expander,

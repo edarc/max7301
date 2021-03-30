@@ -121,9 +121,8 @@ pub(crate) mod test_spy {
 
     use super::ExpanderInterface;
     use registers::RegisterAddress;
-    use std::cell::RefCell;
     use std::fmt;
-    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub enum TestRegister {
@@ -134,15 +133,15 @@ pub(crate) mod test_spy {
     }
 
     pub struct TestSpyInterface {
-        registers: Rc<RefCell<Vec<TestRegister>>>,
-        reads: Rc<RefCell<Vec<u8>>>,
+        registers: Arc<Mutex<Vec<TestRegister>>>,
+        reads: Arc<Mutex<Vec<u8>>>,
     }
 
     impl TestSpyInterface {
         pub fn new() -> Self {
             let mut new = Self {
-                registers: Rc::new(RefCell::new(Vec::new())),
-                reads: Rc::new(RefCell::new(Vec::new())),
+                registers: Arc::new(Mutex::new(Vec::new())),
+                reads: Arc::new(Mutex::new(Vec::new())),
             };
             new.reset();
             new
@@ -151,8 +150,8 @@ pub(crate) mod test_spy {
         pub fn reset(&mut self) {
             use self::TestRegister::*;
 
-            self.reads.borrow_mut().clear();
-            let mut regs = self.registers.borrow_mut();
+            self.reads.lock().unwrap().clear();
+            let mut regs = self.registers.lock().unwrap();
             regs.clear();
             regs.resize(0x60, Forbidden);
 
@@ -179,21 +178,21 @@ pub(crate) mod test_spy {
         }
 
         pub fn get(&self, addr: u8) -> TestRegister {
-            self.registers.borrow()[addr as usize]
+            self.registers.lock().unwrap()[addr as usize]
         }
 
         pub fn set(&mut self, addr: u8, val: TestRegister) {
-            self.registers.borrow_mut()[addr as usize] = val;
+            self.registers.lock().unwrap()[addr as usize] = val;
         }
 
         pub fn reads(&self) -> Vec<u8> {
-            self.reads.borrow().clone()
+            self.reads.lock().unwrap().clone()
         }
     }
 
     impl ExpanderInterface for TestSpyInterface {
         fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()> {
-            let mut regs = self.registers.borrow_mut();
+            let mut regs = self.registers.lock().unwrap();
             let enc_addr = u8::from(addr);
             assert!(enc_addr <= 0x5F);
             match regs[enc_addr as usize] {
@@ -204,8 +203,8 @@ pub(crate) mod test_spy {
             Ok(())
         }
         fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()> {
-            self.reads.borrow_mut().push(addr.into());
-            let regs = self.registers.borrow();
+            self.reads.lock().unwrap().push(addr.into());
+            let regs = self.registers.lock().unwrap();
             let enc_addr = u8::from(addr);
             assert!(enc_addr <= 0x5F);
             match regs[enc_addr as usize] {
@@ -240,14 +239,14 @@ pub(crate) mod test_spy {
     }
 
     pub struct SemanticTestSpyInterface {
-        ports: Rc<RefCell<Vec<TestPort>>>,
+        ports: Arc<Mutex<Vec<TestPort>>>,
     }
 
     impl SemanticTestSpyInterface {
         pub fn new(init: Vec<bool>) -> Self {
             assert!(init.len() == 32 - 4);
             Self {
-                ports: Rc::new(RefCell::new(
+                ports: Arc::new(Mutex::new(
                     init.into_iter()
                         .map(|b| TestPort::Reset(b))
                         .collect::<Vec<_>>(),
@@ -264,7 +263,8 @@ pub(crate) mod test_spy {
         pub fn peek_all(&self) -> Vec<TestPort> {
             use self::TestPort::*;
             self.ports
-                .borrow()
+                .lock()
+                .unwrap()
                 .iter()
                 .cloned()
                 .map(|v| match v {
@@ -277,7 +277,8 @@ pub(crate) mod test_spy {
         pub fn peek_bits(&self) -> Vec<bool> {
             use self::TestPort::*;
             self.ports
-                .borrow()
+                .lock()
+                .unwrap()
                 .iter()
                 .cloned()
                 .map(|v| match v {
@@ -289,7 +290,7 @@ pub(crate) mod test_spy {
         fn write_port(&self, port: u8, bit: bool) {
             use self::TestPort::*;
             let idx = port as usize - 4;
-            let slot_ref = &mut self.ports.borrow_mut()[idx];
+            let slot_ref = &mut self.ports.lock().unwrap()[idx];
             *slot_ref = match slot_ref {
                 Reset(_) | BlindWrite(_) => BlindWrite(bit),
                 Read(_) | ReadWrite(_) => ReadWrite(bit),
@@ -299,7 +300,7 @@ pub(crate) mod test_spy {
         fn read_port(&self, port: u8) -> bool {
             use self::TestPort::*;
             let idx = port as usize - 4;
-            let slot_ref = &mut self.ports.borrow_mut()[idx];
+            let slot_ref = &mut self.ports.lock().unwrap()[idx];
             let (upd, ret) = match slot_ref {
                 Reset(b) | Read(b) => (Read(*b), *b),
                 ReadWrite(b) => (ReadWrite(*b), *b),
@@ -316,7 +317,8 @@ pub(crate) mod test_spy {
                 f,
                 "[ {} ]",
                 self.ports
-                    .borrow()
+                    .lock()
+                    .unwrap()
                     .iter()
                     .map(|&v| format!("{:?}", v))
                     .collect::<Vec<_>>()

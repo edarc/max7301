@@ -14,23 +14,12 @@ use registers::valid_port;
 pub struct ImmediateIO<M, EI>(M, PhantomData<EI>)
 where
     M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface;
-
-// Unsafety: This is only needed because the presence of PhantomData<EI> causes the struct to no
-// longer be Sync, because EI is often not Sync since it owns a global resource (e.g. SPI device).
-// However, the EI is actually owned by the Expander which is in the mutex which normally
-// re-instates Sync-ness. PhantomData is there to shut up the unused type parameter error.
-unsafe impl<M, EI> Sync for ImmediateIO<M, EI>
-where
-    M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface,
-{
-}
+    EI: ExpanderInterface + Send;
 
 impl<M, EI> ImmediateIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface,
+    EI: ExpanderInterface + Send,
 {
     pub(crate) fn new(expander: Expander<EI>) -> Self {
         ImmediateIO(M::new(expander), PhantomData)
@@ -54,7 +43,7 @@ where
 impl<M, EI> ExpanderIO for ImmediateIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
-    EI: ExpanderInterface,
+    EI: ExpanderInterface + Send,
 {
     fn write_port(&self, port: u8, bit: bool) {
         self.0.lock(|ex| ex.write_port(port, bit).unwrap())

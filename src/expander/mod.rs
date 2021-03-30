@@ -18,7 +18,7 @@ pub struct Expander<EI: ExpanderInterface> {
     pub(crate) config: ExpanderConfig,
 }
 
-impl<EI: ExpanderInterface> Expander<EI> {
+impl<EI: ExpanderInterface + Send> Expander<EI> {
     /// Create a new `Expander`.
     ///
     /// Takes ownership of the `ExpanderInterface` which it should use to communicate with the
