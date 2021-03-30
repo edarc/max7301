@@ -328,11 +328,11 @@ pub(crate) mod test_spy {
     impl ExpanderInterface for SemanticTestSpyInterface {
         fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()> {
             match u8::from(addr) {
-                single @ 0x24...0x3F => {
+                single @ 0x24..=0x3F => {
                     let port = single - 0x20;
                     self.write_port(port, (value & 0x01) == 1);
                 }
-                multi @ 0x44...0x5F => {
+                multi @ 0x44..=0x5F => {
                     let start_port = multi - 0x40;
                     for port_offset in 0..8 {
                         let port = start_port + port_offset;
@@ -347,7 +347,7 @@ pub(crate) mod test_spy {
         }
         fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()> {
             Ok(match u8::from(addr) {
-                single @ 0x24...0x3F => {
+                single @ 0x24..=0x3F => {
                     let port = single - 0x20;
                     if self.read_port(port) {
                         1
@@ -355,7 +355,7 @@ pub(crate) mod test_spy {
                         0
                     }
                 }
-                multi @ 0x44...0x5F => {
+                multi @ 0x44..=0x5F => {
                     let start_port = multi - 0x40;
                     let mut bits = 0u8;
                     for port_offset in 0..8 {

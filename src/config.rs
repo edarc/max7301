@@ -50,7 +50,7 @@ impl Default for BankConfig {
 impl BankConfig {
     fn set_port(&mut self, port_offset: u8, cfg: PortMode) {
         match port_offset {
-            0...4 => {
+            0..=4 => {
                 let mask = !(0b11u8 << port_offset * 2);
                 let cfg_bits = u8::from(cfg) << port_offset * 2;
                 self.0 = self.0 & mask | cfg_bits;
