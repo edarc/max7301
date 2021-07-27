@@ -45,18 +45,20 @@ where
     M: IOMutex<Expander<EI>>,
     EI: ExpanderInterface + Send,
 {
-    fn write_port(&self, port: u8, bit: bool) {
-        self.0.lock(|ex| ex.write_port(port, bit).unwrap())
+    type Error = EI::Error;
+
+    fn write_port(&self, port: u8, bit: bool) -> Result<(), EI::Error> {
+        self.0.lock(|ex| ex.write_port(port, bit))
     }
-    fn read_port(&self, port: u8) -> bool {
-        self.0.lock(|ex| ex.read_port(port).unwrap())
+    fn read_port(&self, port: u8) -> Result<bool, EI::Error> {
+        self.0.lock(|ex| ex.read_port(port))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use expander::Expander;
-    use hal::digital::{InputPin, OutputPin};
+    use hal::digital::v2::{InputPin, OutputPin};
     use interface::test_spy::{TestRegister as TR, TestSpyInterface};
     use mutex::DefaultMutex;
 
@@ -66,7 +68,7 @@ mod tests {
         let io = Expander::new(ei.split()).into_immediate::<DefaultMutex<_>>();
         let mut pin_twelve = io.port_pin(12);
 
-        pin_twelve.set_high();
+        assert!(pin_twelve.set_high().is_ok());
         assert_eq!(ei.get(0x2C), TR::WrittenValue(0x01));
     }
 
@@ -77,10 +79,10 @@ mod tests {
         let pin_twelve = io.port_pin(12);
 
         ei.set(0x2C, TR::ResetValue(0x00));
-        assert_eq!(pin_twelve.is_high(), false);
+        assert_eq!(pin_twelve.is_high(), Ok(false));
 
         ei.set(0x2C, TR::ResetValue(0x01));
-        assert_eq!(pin_twelve.is_high(), true);
+        assert_eq!(pin_twelve.is_high(), Ok(true));
     }
 
     #[test]
@@ -92,9 +94,9 @@ mod tests {
         let pin_twenty = io.port_pin(20);
 
         ei.set(0x34, TR::ResetValue(0x01));
-        pin_twelve.set_high();
-        pin_sixteen.set_low();
-        assert_eq!(pin_twenty.is_low(), false);
+        assert!(pin_twelve.set_high().is_ok());
+        assert!(pin_sixteen.set_low().is_ok());
+        assert_eq!(pin_twenty.is_low(), Ok(false));
         assert_eq!(ei.get(0x2C), TR::WrittenValue(0x01));
         assert_eq!(ei.get(0x30), TR::WrittenValue(0x00));
     }

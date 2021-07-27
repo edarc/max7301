@@ -91,7 +91,7 @@ where
     ///
     /// This is done using batch registers of MAX7301 to reduce bus traffic. All pending
     /// `OutputPin` operations are discarded.
-    pub fn refresh(&self) -> Result<(), ()> {
+    pub fn refresh(&self) -> Result<(), EI::Error> {
         self.dirty.store(0, Ordering::Release);
         let mut load_buffer = 0usize;
         let mut fresh_buffer = 0usize;
@@ -115,7 +115,7 @@ where
     ///
     /// The strategy used to do this is controlled by `strategy` (see [`Strategy`] docs for a
     /// description of the available strategies).
-    pub fn write_back(&self, strategy: Strategy) -> Result<(), ()> {
+    pub fn write_back(&self, strategy: Strategy) -> Result<(), EI::Error> {
         let mut start_port = 0;
         let mut ports_to_write = self.dirty.load(Ordering::Acquire);
         let mut ok_to_write = match strategy {
@@ -146,12 +146,19 @@ where
     }
 }
 
+#[derive(PartialEq, Debug)]
+pub enum TransactionalIOError {
+    PortNotRefreshed,
+}
+
 impl<M, EI> ExpanderIO for TransactionalIO<M, EI>
 where
     M: IOMutex<Expander<EI>>,
     EI: ExpanderInterface + Send,
 {
-    fn write_port(&self, port: u8, bit: bool) {
+    type Error = TransactionalIOError;
+
+    fn write_port(&self, port: u8, bit: bool) -> Result<(), Self::Error> {
         let or_bit = 1 << port;
         if bit {
             self.cache.fetch_or(or_bit, Ordering::Release);
@@ -160,20 +167,21 @@ where
         }
         self.dirty.fetch_or(or_bit, Ordering::Relaxed);
         self.fresh.fetch_or(or_bit, Ordering::Relaxed);
+        Ok(())
     }
-    fn read_port(&self, port: u8) -> bool {
+    fn read_port(&self, port: u8) -> Result<bool, Self::Error> {
         if self.fresh.load(Ordering::Relaxed) & (1 << port) == 0 {
-            panic!("Read of un-refreshed port;}")
+            return Err(Self::Error::PortNotRefreshed);
         }
-        self.cache.load(Ordering::Relaxed) & (1 << port) != 0
+        Ok(self.cache.load(Ordering::Relaxed) & (1 << port) != 0)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Strategy;
+    use super::{Strategy, TransactionalIOError};
     use expander::Expander;
-    use hal::digital::{InputPin, OutputPin};
+    use hal::digital::v2::{InputPin, OutputPin};
     use interface::test_spy::{SemanticTestSpyInterface, TestPort};
     use mutex::DefaultMutex;
     use proptest::collection::vec;
@@ -183,18 +191,15 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(2000))]
 
         #[test]
-        fn prop_read_unrefreshed_panics(
+        fn prop_read_unrefreshed_returns_err(
             reset in vec(any::<bool>(), 32 - 4),
             pin in 4..=31u8
         ) {
-            assert!(std::panic::catch_unwind(|| {
-                let ei = SemanticTestSpyInterface::new(reset);
-                let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
-                let any_pin = io.port_pin(pin);
+            let ei = SemanticTestSpyInterface::new(reset);
+            let io = Expander::new(ei.split()).into_transactional::<DefaultMutex<_>>();
+            let any_pin = io.port_pin(pin);
 
-                any_pin.is_high();
-            })
-            .is_err());
+            assert_eq!(any_pin.is_high(), Err(TransactionalIOError::PortNotRefreshed)) ;
         }
 
         #[test]
@@ -212,7 +217,7 @@ mod tests {
 
             assert!(io.refresh().is_ok());
             for (idx, pin_nr) in pins.iter().enumerate() {
-                assert_eq!(some_pins[idx].is_high(), reset[*pin_nr as usize - 4]);
+                assert_eq!(some_pins[idx].is_high(), Ok(reset[*pin_nr as usize - 4]));
             }
         }
 
@@ -237,9 +242,9 @@ mod tests {
 
             for (port, pin, bit) in some_pins.iter_mut() {
                 if *bit {
-                    pin.set_high()
+                    assert!(pin.set_high().is_ok());
                 } else {
-                    pin.set_low()
+                    assert!(pin.set_low().is_ok());
                 }
                 expect[*port as usize - 4] = TestPort::BlindWrite(*bit);
             }
@@ -269,9 +274,9 @@ mod tests {
             assert!(io.refresh().is_ok());
             for (port, pin, bit) in some_pins.iter_mut() {
                 if *bit {
-                    pin.set_high()
+                    assert!(pin.set_high().is_ok());
                 } else {
-                    pin.set_low()
+                    assert!(pin.set_low().is_ok());
                 }
                 expect[*port as usize - 4] = TestPort::ReadWrite(*bit);
             }
@@ -300,9 +305,9 @@ mod tests {
 
             for (port, pin, bit) in some_pins.iter_mut() {
                 if *bit {
-                    pin.set_high()
+                    assert!(pin.set_high().is_ok());
                 } else {
-                    pin.set_low()
+                    assert!(pin.set_low().is_ok());
                 }
                 expect[*port as usize - 4] = TestPort::BlindWrite(*bit);
             }
@@ -330,9 +335,9 @@ mod tests {
             assert!(io.refresh().is_ok());
             for (port, pin, bit) in some_pins.iter_mut() {
                 if *bit {
-                    pin.set_high()
+                    assert!(pin.set_high().is_ok());
                 } else {
-                    pin.set_low()
+                    assert!(pin.set_low().is_ok());
                 }
                 expect[*port as usize - 4] = *bit;
             }
@@ -366,9 +371,9 @@ mod tests {
 
             for (port, pin, bit) in some_pins.iter_mut() {
                 if *bit {
-                    pin.set_high()
+                    assert!(pin.set_high().is_ok());
                 } else {
-                    pin.set_low()
+                    assert!(pin.set_low().is_ok());
                 }
                 expect.insert(*port, *bit);
             }
@@ -401,9 +406,9 @@ mod tests {
             assert!(io.refresh().is_ok());
             for (port, pin, bit) in some_pins.iter_mut() {
                 if *bit {
-                    pin.set_high()
+                    assert!(pin.set_high().is_ok());
                 } else {
-                    pin.set_low()
+                    assert!(pin.set_low().is_ok());
                 }
                 expect.insert(*port, *bit);
             }

@@ -193,7 +193,7 @@ impl<'e, EI: ExpanderInterface + Send> Configurator<'e, EI> {
     /// Commit the configuration changes to the MAX7301. The configurator will attempt to update
     /// the device's configuration registers while minimizing bus traffic (avoiding
     /// read-modify-writes when possible, not setting registers that were not changed).
-    pub fn commit(self) -> Result<(), ()> {
+    pub fn commit(self) -> Result<(), EI::Error> {
         for (bank, bank_config) in self.banks.iter().enumerate() {
             match bank_config.status() {
                 BankConfigStatus::Unchanged => {}

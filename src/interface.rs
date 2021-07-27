@@ -7,10 +7,12 @@ use registers::RegisterAddress;
 /// An interface for the MAX7301 implements this trait, which provides the basic operations for
 /// sending pre-encoded register accesses to the chip via the interface.
 pub trait ExpanderInterface {
+    /// The type of error that register reads and writes may return.
+    type Error;
     /// Issue a write command to the expander to write `value` into the register at `addr`.
-    fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()>;
+    fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), Self::Error>;
     /// Issue a read command to the expander to fetch the `u8` value at register `addr`.
-    fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()>;
+    fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, Self::Error>;
 }
 
 // This is here (and has to be pub) for doctests only. It's useless otherwise.
@@ -20,10 +22,15 @@ pub mod noop {
     use registers::RegisterAddress;
     pub struct NoopInterface;
     impl ExpanderInterface for NoopInterface {
-        fn write_register(&mut self, _addr: RegisterAddress, _value: u8) -> Result<(), ()> {
+        type Error = core::convert::Infallible;
+        fn write_register(
+            &mut self,
+            _addr: RegisterAddress,
+            _value: u8,
+        ) -> Result<(), Self::Error> {
             Ok(())
         }
-        fn read_register(&mut self, _addr: RegisterAddress) -> Result<u8, ()> {
+        fn read_register(&mut self, _addr: RegisterAddress) -> Result<u8, Self::Error> {
             Ok(0u8)
         }
     }
@@ -37,6 +44,33 @@ pub mod spi {
     use super::{ExpanderInterface, RegisterAddress};
     use registers::Register;
 
+    /// The union of all errors that may occur on the SPI interface. This primarily consists of
+    /// variants for each of the error types for the chip select GPIO, SPI write, and SPI transfer.
+    #[derive(Debug)]
+    pub enum SpiInterfaceError<CSE, WE, TE> {
+        /// The chip select GPIO threw an error.
+        CSError(CSE),
+        /// An error occurred during SPI write.
+        WriteError(WE),
+        /// An error occurred during SPI transfer.
+        TransferError(TE),
+        /// A register address was returned by the device that does not match what was sent. This
+        /// is probably a hardware issue.
+        AddressError,
+    }
+
+    impl<CSE, WE, TE> SpiInterfaceError<CSE, WE, TE> {
+        fn from_cs(e: CSE) -> Self {
+            Self::CSError(e)
+        }
+        fn from_write(e: WE) -> Self {
+            Self::WriteError(e)
+        }
+        fn from_transfer(e: TE) -> Self {
+            Self::TransferError(e)
+        }
+    }
+
     /// A configured `ExpanderInterface` for controlling a MAX7301 via SPI.
     pub struct SpiInterface<SPI, CS> {
         /// The SPI master device connected to the MAX7301.
@@ -48,12 +82,11 @@ pub mod spi {
     impl<SPI, CS> SpiInterface<SPI, CS>
     where
         SPI: hal::blocking::spi::Write<u8> + hal::blocking::spi::Transfer<u8>,
-        CS: hal::digital::OutputPin,
+        CS: hal::digital::v2::OutputPin,
     {
         /// Create a new SPI interface to communicate with the port expander. `spi` is the SPI
         /// master device, and `cs` is the GPIO output pin connected to the CS pin of the MAX7301.
-        pub fn new(spi: SPI, mut cs: CS) -> Self {
-            cs.set_high();
+        pub fn new(spi: SPI, cs: CS) -> Self {
             Self { spi, cs }
         }
     }
@@ -61,55 +94,49 @@ pub mod spi {
     impl<SPI, CS> ExpanderInterface for SpiInterface<SPI, CS>
     where
         SPI: hal::blocking::spi::Write<u8> + hal::blocking::spi::Transfer<u8>,
-        CS: hal::digital::OutputPin,
+        CS: hal::digital::v2::OutputPin,
     {
-        fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()> {
+        type Error = SpiInterfaceError<
+            <CS as hal::digital::v2::OutputPin>::Error,
+            <SPI as hal::blocking::spi::Write<u8>>::Error,
+            <SPI as hal::blocking::spi::Transfer<u8>>::Error,
+        >;
+
+        fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), Self::Error> {
             // Address goes in upper byte, value goes in lower. Address MSB is zero for a write.
             let buf = [u8::from(addr), value];
 
             // Select chip and do bus write.
-            self.cs.set_low();
+            self.cs.set_low().map_err(Self::Error::from_cs)?;
             let result = self.spi.write(&buf);
-            self.cs.set_high();
-
-            match result {
-                Ok(()) => Ok(()),
-                Err(_) => Err(()),
-            }
+            self.cs.set_high().map_err(Self::Error::from_cs)?;
+            result.map_err(Self::Error::from_write)
         }
 
-        fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()> {
+        fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, Self::Error> {
             // Address goes in upper byte, lower byte is don't-care because it will be clobbered
             // when CS goes high. Address MSB is *set* for a read.
             let addr_word = 0x80 | u8::from(addr);
 
             // Select chip and do bus write.
-            self.cs.set_low();
+            self.cs.set_low().map_err(Self::Error::from_cs)?;
             let addr_result = self.spi.write(&[addr_word, 0]);
-            self.cs.set_high();
-
-            match addr_result {
-                Err(_) => return Err(()),
-                _ => {}
-            };
+            self.cs.set_high().map_err(Self::Error::from_cs)?;
+            addr_result.map_err(Self::Error::from_write)?;
 
             // Expander has latched the value of the requested register into the low byte of its
             // SPI shift register at CS rising edge. Select chip again and shift it back to us.
             // Shift in a no-op so the expander will do nothing on second CS falling edge.
             let mut buf = [RegisterAddress::from(Register::Noop).into(), 0u8];
-            self.cs.set_low();
+            self.cs.set_low().map_err(Self::Error::from_cs)?;
             let data_result = self.spi.transfer(&mut buf);
-            self.cs.set_high();
+            self.cs.set_high().map_err(Self::Error::from_cs)?;
+            let return_data = data_result.map_err(Self::Error::from_transfer)?;
 
-            match data_result {
-                Err(_) => Err(()),
-                Ok(buf) => {
-                    if buf[0] != addr_word {
-                        Err(())
-                    } else {
-                        Ok(buf[1])
-                    }
-                }
+            if return_data[0] != addr_word {
+                Err(Self::Error::AddressError)
+            } else {
+                Ok(return_data[1])
             }
         }
     }
@@ -191,7 +218,9 @@ pub(crate) mod test_spy {
     }
 
     impl ExpanderInterface for TestSpyInterface {
-        fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()> {
+        type Error = std::convert::Infallible;
+
+        fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), Self::Error> {
             let mut regs = self.registers.lock().unwrap();
             let enc_addr = u8::from(addr);
             assert!(enc_addr <= 0x5F);
@@ -202,7 +231,7 @@ pub(crate) mod test_spy {
             };
             Ok(())
         }
-        fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()> {
+        fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, Self::Error> {
             self.reads.lock().unwrap().push(addr.into());
             let regs = self.registers.lock().unwrap();
             let enc_addr = u8::from(addr);
@@ -328,7 +357,9 @@ pub(crate) mod test_spy {
     }
 
     impl ExpanderInterface for SemanticTestSpyInterface {
-        fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), ()> {
+        type Error = std::convert::Infallible;
+
+        fn write_register(&mut self, addr: RegisterAddress, value: u8) -> Result<(), Self::Error> {
             match u8::from(addr) {
                 single @ 0x24..=0x3F => {
                     let port = single - 0x20;
@@ -347,7 +378,7 @@ pub(crate) mod test_spy {
             }
             Ok(())
         }
-        fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, ()> {
+        fn read_register(&mut self, addr: RegisterAddress) -> Result<u8, Self::Error> {
             Ok(match u8::from(addr) {
                 single @ 0x24..=0x3F => {
                     let port = single - 0x20;

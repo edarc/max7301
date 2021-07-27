@@ -23,7 +23,7 @@
 //!
 //! ```ignore
 //! let spi = /* construct something implementing embedded_hal::spi::blocking::{Write,Transfer} */
-//! let cs = /* construct something implementing embedded_hal::digital::OutputPin */
+//! let cs = /* construct something implementing embedded_hal::digital::v2::OutputPin */
 //!
 //! let ei = max7301::SpiInterface::new(spi, cs);
 //! let mut expander = max7301::Expander::new(ei);
@@ -37,7 +37,7 @@
 //! configuration registers:
 //!
 //! ```
-//! # fn main() -> Result<(), ()> {
+//! # fn main() -> Result<(), <max7301::interface::noop::NoopInterface as max7301::ExpanderInterface>::Error> {
 //! # let ei = max7301::interface::noop::NoopInterface;
 //! # let mut expander = max7301::Expander::new(ei);
 //! expander
@@ -58,7 +58,7 @@
 //! directly:
 //!
 //! ```
-//! # fn main() -> Result<(), ()> {
+//! # fn main() -> Result<(), <max7301::interface::noop::NoopInterface as max7301::ExpanderInterface>::Error> {
 //! # let ei = max7301::interface::noop::NoopInterface;
 //! # let mut expander = max7301::Expander::new(ei);
 //! let four_thru_twelve: u8 = expander.read_ports(4)?;
@@ -70,7 +70,7 @@
 //! # HAL modes
 //!
 //! To compose the driver with other `embedded-hal` drivers that are compatible with
-//! `embedded_hal::digital::{InputPin,OutputPin}`, you can convert the `Expander` into an I/O
+//! `embedded_hal::digital::v2::{InputPin,OutputPin}`, you can convert the `Expander` into an I/O
 //! adapter that will produce ownable `PortPin` instances for each GPIO port on the expander.
 //! `PortPin` implments the `InputPin` and `OutputPin` traits from `embedded-hal`, allowing
 //! composition with other drivers that need GPIO pins.
@@ -90,11 +90,11 @@
 //!
 //! ```
 //! # struct MyTrafficLight<P>(core::marker::PhantomData<P>);
-//! # impl<P> MyTrafficLight<P> where P: embedded_hal::digital::OutputPin {
+//! # impl<P> MyTrafficLight<P> where P: embedded_hal::digital::v2::OutputPin {
 //! #   fn new(r: P, y: P, g: P) -> Self { Self(core::marker::PhantomData) }
 //! #   fn change_to_red(&mut self) {}
 //! # }
-//! # fn main() -> Result<(), ()> {
+//! # fn main() -> Result<(), <max7301::interface::noop::NoopInterface as max7301::ExpanderInterface>::Error> {
 //! # let ei = max7301::interface::noop::NoopInterface;
 //! # let mut expander = max7301::Expander::new(ei);
 //! expander.configure().ports(4..=6, max7301::PortMode::Output).commit()?;
@@ -121,11 +121,11 @@
 //!
 //! ```
 //! # struct MyFancyTrafficLight<P>(core::marker::PhantomData<P>);
-//! # impl<P> MyFancyTrafficLight<P> where P: embedded_hal::digital::OutputPin {
+//! # impl<P> MyFancyTrafficLight<P> where P: embedded_hal::digital::v2::OutputPin {
 //! #   fn new(r: P, y: P, g: P, s: P) -> Self { Self(core::marker::PhantomData) }
 //! #   fn change_if_tripped(&mut self) {}
 //! # }
-//! # fn main() -> Result<(), ()> {
+//! # fn main() -> Result<(), <max7301::interface::noop::NoopInterface as max7301::ExpanderInterface>::Error> {
 //! # let ei = max7301::interface::noop::NoopInterface;
 //! # let mut expander = max7301::Expander::new(ei);
 //! expander

@@ -61,7 +61,7 @@ impl<EI: ExpanderInterface + Send> Expander<EI> {
     }
 
     /// Perform a read of the current value of a single I/O port on the expander.
-    pub fn read_port(&mut self, port: u8) -> Result<bool, ()> {
+    pub fn read_port(&mut self, port: u8) -> Result<bool, EI::Error> {
         self.iface
             .read_register(Register::SinglePort(port).into())
             .map(|v| v == 0x01)
@@ -75,13 +75,13 @@ impl<EI: ExpanderInterface + Send> Expander<EI> {
     /// `u8` where the LSB is the value read from `start_port`, and each higher bit is the 7 ports
     /// following it in ascending order. If any of the bits would correspond to a port higher than
     /// 31, then those bits will be unset.
-    pub fn read_ports(&mut self, start_port: u8) -> Result<u8, ()> {
+    pub fn read_ports(&mut self, start_port: u8) -> Result<u8, EI::Error> {
         self.iface
             .read_register(Register::PortRange(start_port).into())
     }
 
     /// Write a value to a single I/O port on the expander.
-    pub fn write_port(&mut self, port: u8, bit: bool) -> Result<(), ()> {
+    pub fn write_port(&mut self, port: u8, bit: bool) -> Result<(), EI::Error> {
         self.iface.write_register(
             Register::SinglePort(port).into(),
             if bit { 0x01 } else { 0x00 },
@@ -95,17 +95,17 @@ impl<EI: ExpanderInterface + Send> Expander<EI> {
     /// where the LSB is the value to write to `start_port`, and each higher bit is the 7 ports
     /// following it in ascending order. If any of the bits would correspond to a port higher than
     /// 31, then those bits will be ignored.
-    pub fn write_ports(&mut self, start_port: u8, bits: u8) -> Result<(), ()> {
+    pub fn write_ports(&mut self, start_port: u8, bits: u8) -> Result<(), EI::Error> {
         self.iface
             .write_register(Register::PortRange(start_port).into(), bits)
     }
 
-    pub(crate) fn write_config(&mut self) -> Result<(), ()> {
+    pub(crate) fn write_config(&mut self) -> Result<(), EI::Error> {
         self.iface
             .write_register(Register::Configuration.into(), self.config.clone().into())
     }
 
-    pub(crate) fn write_bank_config(&mut self, bank: u8, cfg: BankConfig) -> Result<(), ()> {
+    pub(crate) fn write_bank_config(&mut self, bank: u8, cfg: BankConfig) -> Result<(), EI::Error> {
         self.iface
             .write_register(Register::BankConfig(bank).into(), cfg.into())
     }
@@ -114,7 +114,7 @@ impl<EI: ExpanderInterface + Send> Expander<EI> {
         &mut self,
         bank: u8,
         f: impl Fn(u8) -> BankConfig,
-    ) -> Result<(), ()> {
+    ) -> Result<(), EI::Error> {
         let addr = Register::BankConfig(bank).into();
         let current = self.iface.read_register(addr)?;
         self.iface.write_register(addr, f(current).into())
